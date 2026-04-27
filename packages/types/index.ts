@@ -42,6 +42,7 @@ export interface PlaylistItem {
   playlist_id: string;
   media_id: string;
   sort_order: number;
+  /** Max on-screen time for this item (s). For video, null = play to natural end. */
   duration_seconds: number | null;
   display_from: string | null;
   display_until: string | null;

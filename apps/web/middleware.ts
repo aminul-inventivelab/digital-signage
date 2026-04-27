@@ -38,9 +38,11 @@ export async function middleware(request: NextRequest) {
     },
   });
 
+  // Session from cookies (no Auth HTTP round-trip). Matches server components, which use getSession() via getServerAuth().
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: { session },
+  } = await supabase.auth.getSession();
+  const user = session?.user ?? null;
 
   if (isProtectedPath(request.nextUrl.pathname) && !user) {
     const redirectUrl = new URL("/login", request.url);

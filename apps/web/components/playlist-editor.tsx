@@ -3,51 +3,30 @@
 import type { DropResult } from "@hello-pangea/dnd";
 import { DragDropContext, Draggable, Droppable } from "@hello-pangea/dnd";
 import type { Media, PlaylistItemWithMedia } from "@signage/types";
+import {
+  Clock,
+  FileImage,
+  FileVideo,
+  GripVertical,
+  Image as ImageIcon,
+  Monitor,
+  Plus,
+  Search,
+  Trash2,
+} from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useConsoleSync } from "@/components/console/console-sync-provider";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
+import { useConsoleDataStore } from "@/stores/console-data-store";
 
-interface PlaylistEditorProps {
-  playlistId: string;
-  ownerId: string;
-  initialName: string;
-}
-
-type RawPlaylistItemRow = {
-  id: string;
-  playlist_id: string;
-  media_id: string;
-  sort_order: number;
-  duration_seconds: number | null;
-  display_from: string | null;
-  display_until: string | null;
-  created_at: string;
-  media: PlaylistItemWithMedia["media"] | PlaylistItemWithMedia["media"][];
-};
-
-function mapPlaylistItemRow(row: RawPlaylistItemRow): PlaylistItemWithMedia {
-  const mediaField = row.media;
-  const media = Array.isArray(mediaField) ? mediaField[0] : mediaField;
-  if (!media) {
-    throw new Error("Playlist item is missing joined media metadata.");
-  }
-  return {
-    id: row.id,
-    playlist_id: row.playlist_id,
-    media_id: row.media_id,
-    sort_order: row.sort_order,
-    duration_seconds: row.duration_seconds,
-    display_from: row.display_from,
-    display_until: row.display_until,
-    created_at: row.created_at,
-    media,
-  };
-}
+const EMPTY_PLAYLIST_ITEMS: PlaylistItemWithMedia[] = [];
 
 function reorder<T>(list: T[], startIndex: number, endIndex: number): T[] {
   const result = Array.from(list);
@@ -57,45 +36,95 @@ function reorder<T>(list: T[], startIndex: number, endIndex: number): T[] {
   return result;
 }
 
-export function PlaylistEditor({ playlistId, ownerId, initialName }: PlaylistEditorProps) {
+function mediaUrl(publicBaseUrl: string, storagePath: string) {
+  return `${publicBaseUrl}/storage/v1/object/public/media/${storagePath}`;
+}
+
+function formatDurationShort(totalSec: number): string {
+  const s = Math.max(0, Math.round(totalSec));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  if (rem === 0) return `${m}m`;
+  return `${m}m ${rem}s`;
+}
+
+function LibraryThumb({ media, publicBaseUrl }: { media: Media; publicBaseUrl: string }) {
+  const url = mediaUrl(publicBaseUrl, media.storage_path);
+  return (
+    <div className="relative h-11 w-14 shrink-0 overflow-hidden rounded-md border border-border bg-muted">
+      {media.file_type === "image" ? (
+        <Image src={url} alt="" fill className="object-cover" sizes="56px" />
+      ) : media.file_type === "video" ? (
+        <video className="h-full w-full object-cover" src={url} muted playsInline preload="metadata" />
+      ) : (
+        <div className="flex h-full items-center justify-center">
+          <FileImage className="h-5 w-5 text-muted-foreground" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RowThumb({ item, publicBaseUrl }: { item: PlaylistItemWithMedia; publicBaseUrl: string }) {
+  const url = mediaUrl(publicBaseUrl, item.media.storage_path);
+  return (
+    <div className="relative h-12 w-[4.5rem] shrink-0 overflow-hidden rounded-md border border-border bg-muted">
+      {item.media.file_type === "image" ? (
+        <Image src={url} alt="" fill className="object-cover" sizes="72px" />
+      ) : item.media.file_type === "video" ? (
+        <video className="h-full w-full object-cover" src={url} muted playsInline preload="metadata" />
+      ) : (
+        <div className="flex h-full items-center justify-center">
+          <FileImage className="h-6 w-6 text-muted-foreground" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface PlaylistEditorProps {
+  playlistId: string;
+  initialName: string;
+  publicBaseUrl: string;
+}
+
+export function PlaylistEditor({ playlistId, initialName, publicBaseUrl }: PlaylistEditorProps) {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const { syncNow } = useConsoleSync();
+  const cachedItems = useConsoleDataStore(
+    (s) => s.playlistItemsByPlaylistId[playlistId] ?? EMPTY_PLAYLIST_ITEMS,
+  );
+  const allMedia = useConsoleDataStore((s) => s.media) as Media[];
   const [name, setName] = useState(initialName);
-  const [items, setItems] = useState<PlaylistItemWithMedia[]>([]);
-  const [media, setMedia] = useState<Media[]>([]);
+  const [items, setItems] = useState<PlaylistItemWithMedia[]>(cachedItems);
   const [selectedMediaId, setSelectedMediaId] = useState("");
   const [savingName, setSavingName] = useState(false);
-
-  const loadItems = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("playlist_items")
-      .select("id,playlist_id,media_id,sort_order,duration_seconds,display_from,display_until,created_at,media(*)")
-      .eq("playlist_id", playlistId)
-      .order("sort_order", { ascending: true });
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    const rows = (data as RawPlaylistItemRow[] | null) ?? [];
-    setItems(rows.map(mapPlaylistItemRow));
-  }, [playlistId, supabase]);
-
-  const loadMedia = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("media")
-      .select("*")
-      .eq("owner_id", ownerId)
-      .order("created_at", { ascending: false });
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    setMedia((data as Media[]) ?? []);
-  }, [ownerId, supabase]);
+  const [librarySearch, setLibrarySearch] = useState("");
+  const [libraryResetKey, setLibraryResetKey] = useState(0);
 
   useEffect(() => {
-    void loadItems();
-    void loadMedia();
-  }, [loadItems, loadMedia]);
+    setName(initialName);
+  }, [initialName]);
+
+  useEffect(() => {
+    setItems(cachedItems);
+  }, [cachedItems]);
+
+  const reloadFromServer = useCallback(async () => {
+    await syncNow();
+  }, [syncNow]);
+
+  const totalSeconds = useMemo(
+    () => items.reduce((acc, row) => acc + (row.duration_seconds ?? 10), 0),
+    [items],
+  );
+
+  const filteredLibrary = useMemo(() => {
+    const q = librarySearch.trim().toLowerCase();
+    if (!q) return allMedia;
+    return allMedia.filter((m) => (m.original_filename ?? m.storage_path).toLowerCase().includes(q));
+  }, [allMedia, librarySearch]);
 
   async function saveName() {
     setSavingName(true);
@@ -109,6 +138,7 @@ export function PlaylistEditor({ playlistId, ownerId, initialName }: PlaylistEdi
         return;
       }
       toast.success("Playlist name saved");
+      await reloadFromServer();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to save";
       toast.error(message);
@@ -117,181 +147,430 @@ export function PlaylistEditor({ playlistId, ownerId, initialName }: PlaylistEdi
     }
   }
 
-  async function persistOrder(next: PlaylistItemWithMedia[]) {
-    const updates = next.map((item, index) =>
-      supabase.from("playlist_items").update({ sort_order: index }).eq("id", item.id),
-    );
-    const results = await Promise.all(updates);
-    const failed = results.find((r) => r.error);
-    if (failed?.error) {
-      toast.error(failed.error.message);
-      await loadItems();
-      return;
-    }
-  }
+  const persistOrder = useCallback(
+    async (next: PlaylistItemWithMedia[]) => {
+      const updates = next.map((item, index) =>
+        supabase.from("playlist_items").update({ sort_order: index }).eq("id", item.id),
+      );
+      const results = await Promise.all(updates);
+      const failed = results.find((r) => r.error);
+      if (failed?.error) {
+        toast.error(failed.error.message);
+        await reloadFromServer();
+        return;
+      }
+      await reloadFromServer();
+    },
+    [reloadFromServer, supabase],
+  );
 
-  async function onDragEnd(result: DropResult) {
-    if (!result.destination) return;
-    if (result.destination.index === result.source.index) return;
-    const next = reorder(items, result.source.index, result.destination.index);
-    setItems(next);
-    await persistOrder(next);
-  }
+  const addMediaAtIndex = useCallback(
+    async (mediaId: string, destIndex: number) => {
+      const sortLen = useConsoleDataStore.getState().playlistItemsByPlaylistId[playlistId]?.length ?? 0;
+      const { data: row, error } = await supabase
+        .from("playlist_items")
+        .insert({
+          playlist_id: playlistId,
+          media_id: mediaId,
+          sort_order: sortLen,
+          duration_seconds: 10,
+        })
+        .select("id")
+        .single();
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      await reloadFromServer();
+      const fresh = useConsoleDataStore.getState().playlistItemsByPlaylistId[playlistId] ?? [];
+      const fromIndex = fresh.findIndex((i) => i.id === row.id);
+      if (fromIndex < 0) return;
+      if (fromIndex !== destIndex) {
+        const reordered = reorder(fresh, fromIndex, destIndex);
+        setItems(reordered);
+        await persistOrder(reordered);
+      } else {
+        setItems(fresh);
+      }
+    },
+    [persistOrder, playlistId, reloadFromServer, supabase],
+  );
 
-  async function addItem() {
+  const removeItem = useCallback(
+    async (id: string) => {
+      const { error } = await supabase.from("playlist_items").delete().eq("id", id);
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      toast.success("Removed from playlist");
+      await reloadFromServer();
+    },
+    [reloadFromServer, supabase],
+  );
+
+  const updateDuration = useCallback(
+    async (id: string, duration: number | null) => {
+      const { error } = await supabase.from("playlist_items").update({ duration_seconds: duration }).eq("id", id);
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      await reloadFromServer();
+    },
+    [reloadFromServer, supabase],
+  );
+
+  const onDragEnd = useCallback(
+    async (result: DropResult) => {
+      const { destination, source, draggableId } = result;
+      if (!destination) {
+        if (draggableId.startsWith("media-")) setLibraryResetKey((k) => k + 1);
+        return;
+      }
+
+      if (source.droppableId === "playlist-library" && destination.droppableId === "playlist-library") {
+        setLibraryResetKey((k) => k + 1);
+        return;
+      }
+
+      if (draggableId.startsWith("media-") && destination.droppableId === "playlist-main") {
+        const mediaId = draggableId.replace(/^media-/, "");
+        await addMediaAtIndex(mediaId, destination.index);
+        return;
+      }
+
+      if (draggableId.startsWith("clip-") && destination.droppableId === "playlist-library") {
+        const itemId = draggableId.replace(/^clip-/, "");
+        await removeItem(itemId);
+        setLibraryResetKey((k) => k + 1);
+        return;
+      }
+
+      if (
+        draggableId.startsWith("clip-") &&
+        source.droppableId === "playlist-main" &&
+        destination.droppableId === "playlist-main"
+      ) {
+        if (destination.index === source.index) return;
+        const next = reorder(items, source.index, destination.index);
+        setItems(next);
+        await persistOrder(next);
+      }
+    },
+    [addMediaAtIndex, items, persistOrder, removeItem],
+  );
+
+  async function addFromSelect() {
     if (!selectedMediaId) {
       toast.error("Choose a media asset first.");
       return;
     }
-    const nextOrder = items.length === 0 ? 0 : Math.max(...items.map((i) => i.sort_order)) + 1;
-    const { error } = await supabase.from("playlist_items").insert({
-      playlist_id: playlistId,
-      media_id: selectedMediaId,
-      sort_order: nextOrder,
-      duration_seconds: 10,
-    });
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    toast.success("Clip added");
-    await loadItems();
+    await addMediaAtIndex(selectedMediaId, items.length);
+    setSelectedMediaId("");
   }
 
-  async function updateDuration(id: string, duration: number | null) {
-    const { error } = await supabase.from("playlist_items").update({ duration_seconds: duration }).eq("id", id);
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    await loadItems();
-  }
-
-  async function removeItem(id: string) {
-    const { error } = await supabase.from("playlist_items").delete().eq("id", id);
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    toast.success("Clip removed");
-    await loadItems();
+  if (!publicBaseUrl) {
+    return (
+      <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+        Missing NEXT_PUBLIC_SUPABASE_URL. Copy `apps/web/.env.example` to `.env.local` to preview thumbnails.
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">
-            <Link className="text-primary hover:underline" href="/playlists">
-              ← Back to playlists
-            </Link>
-          </p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight">Edit playlist</h1>
-        </div>
-      </div>
+    <DragDropContext onDragEnd={(r) => void onDragEnd(r)}>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-6">
+        <div className="min-w-0 flex-1 space-y-4">
+        <nav aria-label="Breadcrumb" className="text-sm text-muted-foreground">
+          <ol className="flex flex-wrap items-center gap-1.5">
+            <li>
+              <Link href="/playlists" className="hover:text-foreground">
+                Home
+              </Link>
+            </li>
+            <li aria-hidden className="text-muted-foreground/70">
+              /
+            </li>
+            <li className="font-medium text-foreground">{name || "Playlist"}</li>
+          </ol>
+        </nav>
 
-      <Card className="border-border bg-card">
-        <CardHeader>
-          <CardTitle>Details</CardTitle>
-          <CardDescription>Rename the playlist for your teammates.</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3 md:flex-row md:items-end">
-          <div className="flex-1 space-y-2">
-            <Label htmlFor="name">Name</Label>
-            <Input id="name" value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <Button type="button" variant="secondary" onClick={() => void saveName()} disabled={savingName}>
-            {savingName ? "Saving…" : "Save name"}
-          </Button>
-        </CardContent>
-      </Card>
-
-      <Card className="border-border bg-card">
-        <CardHeader>
-          <CardTitle>Playlist builder</CardTitle>
-          <CardDescription>Drag clips to reorder. Durations are seconds (used for still images).</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="flex flex-col gap-3 md:flex-row md:items-end">
-            <div className="flex-1 space-y-2">
-              <Label htmlFor="media">Add media</Label>
-              <select
-                id="media"
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                value={selectedMediaId}
-                onChange={(e) => setSelectedMediaId(e.target.value)}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1 space-y-2">
+            <Label htmlFor="playlist-title" className="sr-only">
+              Playlist name
+            </Label>
+            <Input
+              id="playlist-title"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="h-11 max-w-xl border-transparent bg-white text-xl font-semibold tracking-tight shadow-sm ring-1 ring-border focus-visible:ring-emerald-500/30 dark:bg-card"
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="rounded-full"
+                disabled={savingName || name.trim() === initialName.trim()}
+                onClick={() => void saveName()}
               >
-                <option value="">Select media…</option>
-                {media.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.original_filename ?? m.storage_path}
-                  </option>
-                ))}
-              </select>
+                {savingName ? "Saving…" : "Save name"}
+              </Button>
             </div>
-            <Button type="button" onClick={() => void addItem()}>
-              Add to playlist
-            </Button>
           </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm dark:bg-card">
+              {items.length} {items.length === 1 ? "item" : "items"}
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm dark:bg-card">
+              <Clock className="h-3.5 w-3.5" />
+              {formatDurationShort(totalSeconds)}
+            </span>
+            <Link
+              href="/devices"
+              className={cn(
+                buttonVariants({ size: "sm" }),
+                "inline-flex gap-2 rounded-full bg-emerald-600 font-semibold text-white hover:bg-emerald-700 hover:opacity-100",
+              )}
+            >
+              <Monitor className="h-4 w-4" />
+              Assign to screens
+            </Link>
+          </div>
+        </div>
 
-          <DragDropContext onDragEnd={(result) => void onDragEnd(result)}>
-            <Droppable droppableId="playlist-items">
-              {(provided) => (
-                <div ref={provided.innerRef} {...provided.droppableProps} className="space-y-3">
-                  {items.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No clips yet. Upload media, then add it here.</p>
+          <div className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-card">
+            <div className="border-b border-border bg-muted/30 px-4 py-3">
+              <h2 className="text-sm font-semibold text-foreground">Playlist content</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Drag rows to reorder. Drop assets from the library on the right, or pick below.
+              </p>
+            </div>
+
+            <div className="p-3 sm:p-4">
+              <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <Label htmlFor="quick-add" className="text-xs text-muted-foreground">
+                    Quick add from library
+                  </Label>
+                  <select
+                    id="quick-add"
+                    className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm shadow-sm"
+                    value={selectedMediaId}
+                    onChange={(e) => setSelectedMediaId(e.target.value)}
+                  >
+                    <option value="">Select media…</option>
+                    {allMedia.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.original_filename ?? m.storage_path}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <Button type="button" className="shrink-0 bg-emerald-600 hover:bg-emerald-700" onClick={() => void addFromSelect()}>
+                  <Plus className="mr-1.5 h-4 w-4" />
+                  Add clip
+                </Button>
+              </div>
+
+              <Droppable droppableId="playlist-main">
+                {(dropProvided) => (
+                  <div ref={dropProvided.innerRef} {...dropProvided.droppableProps} className="overflow-x-auto">
+                    <div className="min-w-[520px]">
+                      <div
+                        className="grid grid-cols-[40px_88px_1fr_72px_88px_44px] gap-2 border-b border-border pb-2 text-[0.625rem] font-semibold uppercase tracking-wide text-muted-foreground"
+                        role="row"
+                      >
+                        <span className="pl-1">#</span>
+                        <span>Thumb</span>
+                        <span>Title</span>
+                        <span>Type</span>
+                        <span>Duration</span>
+                        <span className="text-right pr-1" />
+                      </div>
+                      {items.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-border bg-muted/15 px-4 py-14 text-center">
+                          <p className="text-sm font-medium text-foreground">Nothing in this playlist yet</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Drag files from the asset panel, use Quick add, or upload on the{" "}
+                            <Link href="/media" className="font-medium text-emerald-700 underline-offset-4 hover:underline">
+                              Media
+                            </Link>{" "}
+                            page.
+                          </p>
+                        </div>
+                      ) : (
+                        items.map((item, index) => (
+                          <Draggable key={item.id} draggableId={`clip-${item.id}`} index={index}>
+                            {(dragProvided, snapshot) => (
+                              <div
+                                ref={dragProvided.innerRef}
+                                {...dragProvided.draggableProps}
+                                role="row"
+                                className={cn(
+                                  "border-b border-border/80 py-2.5",
+                                  snapshot.isDragging && "rounded-lg bg-emerald-500/5 ring-2 ring-emerald-500/25",
+                                )}
+                              >
+                                <div
+                                  className={cn(
+                                    "grid items-center gap-2",
+                                    "grid-cols-[40px_88px_1fr_72px_88px_44px]",
+                                  )}
+                                >
+                                  <div className="flex items-center justify-center pl-1 text-xs tabular-nums text-muted-foreground">
+                                    <button
+                                      type="button"
+                                      className="cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
+                                      {...dragProvided.dragHandleProps}
+                                      aria-label={`Reorder item ${index + 1}`}
+                                    >
+                                      <GripVertical className="h-4 w-4" />
+                                    </button>
+                                    <span className="ml-0.5">{index + 1}</span>
+                                  </div>
+                                  <RowThumb item={item} publicBaseUrl={publicBaseUrl} />
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-medium">
+                                      {item.media.original_filename ?? item.media.storage_path}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 text-muted-foreground">
+                                    {item.media.file_type === "video" ? (
+                                      <FileVideo className="h-4 w-4 shrink-0" />
+                                    ) : (
+                                      <ImageIcon className="h-4 w-4 shrink-0" />
+                                    )}
+                                    <span className="text-xs capitalize">{item.media.file_type}</span>
+                                  </div>
+                                  <div>
+                                    <Label className="sr-only" htmlFor={`duration-${item.id}`}>
+                                      {item.media.file_type === "video"
+                                        ? "Max on-screen (seconds, empty = full video length)"
+                                        : "Duration (seconds)"}
+                                    </Label>
+                                    <Input
+                                      id={`duration-${item.id}`}
+                                      type="number"
+                                      min={1}
+                                      className="h-9 w-full min-w-0 text-sm tabular-nums"
+                                      key={`d-${item.id}-${item.duration_seconds}`}
+                                      defaultValue={item.duration_seconds ?? 10}
+                                      onBlur={(e) => {
+                                        const raw = e.target.value.trim();
+                                        if (raw === "" && item.media.file_type === "video") {
+                                          void updateDuration(item.id, null);
+                                          return;
+                                        }
+                                        const value = Number(e.target.value);
+                                        const nextValue = Number.isFinite(value) && value > 0 ? value : null;
+                                        void updateDuration(item.id, nextValue);
+                                      }}
+                                    />
+                                  </div>
+                                  <div className="flex justify-end">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-9 w-9 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                      onClick={() => void removeItem(item.id)}
+                                      aria-label="Remove clip"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </div>
+                                {item.media.file_type === "video" && (
+                                  <p className="ml-5 mt-1 text-[0.7rem] leading-tight text-muted-foreground sm:ml-12">
+                                    Max seconds caps how long the video shows on the TV. Leave empty to play the full
+                                    file once, or shorter than the file to end early.
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </Draggable>
+                        ))
+                      )}
+                      {dropProvided.placeholder}
+                    </div>
+                  </div>
+                )}
+              </Droppable>
+            </div>
+          </div>
+        </div>
+
+      <aside className="w-full shrink-0 lg:w-[300px]">
+        <div className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-card">
+          <div className="border-b border-border bg-muted/30 px-4 py-3">
+            <h2 className="text-sm font-semibold text-foreground">Assets</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">Drag into the playlist or tap Add.</p>
+            <div className="relative mt-3">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={librarySearch}
+                onChange={(e) => setLibrarySearch(e.target.value)}
+                placeholder="Search…"
+                className="h-9 border-border bg-background pl-8 text-sm"
+                aria-label="Search assets"
+              />
+            </div>
+          </div>
+          <div className="max-h-[min(520px,calc(100vh-280px))] overflow-y-auto p-3">
+            <Droppable droppableId="playlist-library" key={libraryResetKey}>
+              {(libProvided) => (
+                <ul ref={libProvided.innerRef} {...libProvided.droppableProps} className="space-y-2">
+                  {filteredLibrary.length === 0 ? (
+                    <li className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
+                      No media matches.{" "}
+                      <Link href="/media" className="font-medium text-emerald-700 underline-offset-4 hover:underline">
+                        Upload
+                      </Link>
+                    </li>
                   ) : (
-                    items.map((item, index) => (
-                      <Draggable key={item.id} draggableId={item.id} index={index}>
+                    filteredLibrary.map((m, index) => (
+                      <Draggable key={m.id} draggableId={`media-${m.id}`} index={index}>
                         {(dragProvided, snapshot) => (
-                          <div
+                          <li
                             ref={dragProvided.innerRef}
                             {...dragProvided.draggableProps}
                             {...dragProvided.dragHandleProps}
-                            className={`flex flex-col gap-3 rounded-lg border border-border bg-background p-4 md:flex-row md:items-center md:justify-between ${
-                              snapshot.isDragging ? "shadow-lg" : ""
-                            }`}
+                            className={cn(
+                              "flex items-center gap-2.5 rounded-lg border border-border bg-background p-2 pr-2 shadow-sm",
+                              snapshot.isDragging && "opacity-90 ring-2 ring-emerald-500/30",
+                            )}
                           >
-                            <div>
-                              <p className="text-sm font-medium">
-                                {item.media.original_filename ?? item.media.storage_path}
-                              </p>
-                              <p className="text-xs text-muted-foreground">{item.media.file_type}</p>
+                            <LibraryThumb media={m} publicBaseUrl={publicBaseUrl} />
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-xs font-medium">{m.original_filename ?? m.storage_path}</p>
+                              <p className="text-[0.625rem] capitalize text-muted-foreground">{m.file_type}</p>
                             </div>
-                            <div className="flex flex-wrap items-center gap-3">
-                              <div className="space-y-1">
-                                <Label className="text-xs" htmlFor={`duration-${item.id}`}>
-                                  Duration (s)
-                                </Label>
-                                <Input
-                                  id={`duration-${item.id}`}
-                                  type="number"
-                                  min={1}
-                                  className="h-9 w-24"
-                                  defaultValue={item.duration_seconds ?? 10}
-                                  onBlur={(e) => {
-                                    const value = Number(e.target.value);
-                                    const nextValue = Number.isFinite(value) && value > 0 ? value : null;
-                                    void updateDuration(item.id, nextValue);
-                                  }}
-                                />
-                              </div>
-                              <Button type="button" variant="destructive" size="sm" onClick={() => void removeItem(item.id)}>
-                                Remove
-                              </Button>
-                            </div>
-                          </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="h-8 shrink-0 gap-1 px-2 text-xs"
+                              onClick={() => void addMediaAtIndex(m.id, items.length)}
+                            >
+                              <Plus className="h-3 w-3" />
+                              Add
+                            </Button>
+                          </li>
                         )}
                       </Draggable>
                     ))
                   )}
-                  {provided.placeholder}
-                </div>
+                  {libProvided.placeholder}
+                </ul>
               )}
             </Droppable>
-          </DragDropContext>
-        </CardContent>
-      </Card>
-    </div>
+          </div>
+        </div>
+      </aside>
+      </div>
+    </DragDropContext>
   );
 }

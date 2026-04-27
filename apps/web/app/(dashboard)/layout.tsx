@@ -1,12 +1,9 @@
 import { redirect } from "next/navigation";
 import { DashboardShell } from "@/components/shell/dashboard-shell";
-import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getServerAuth } from "@/lib/supabase/auth";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await getSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { user } = await getServerAuth();
 
   if (!user) {
     redirect("/login");
@@ -17,7 +14,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const displayName = fullName || user.email?.split("@")[0] || "User";
 
   return (
-    <DashboardShell userEmail={user.email ?? ""} displayName={displayName}>
+    <DashboardShell userId={user.id} userEmail={user.email ?? ""} displayName={displayName}>
       {children}
     </DashboardShell>
   );

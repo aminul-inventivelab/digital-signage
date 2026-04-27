@@ -1,10 +1,7 @@
-import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getServerAuth } from "@/lib/supabase/auth";
 
 export default async function ProfilePage() {
-  const supabase = await getSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { user } = await getServerAuth();
 
   const meta = user?.user_metadata as Record<string, string | undefined> | undefined;
   const fullName = meta?.full_name?.trim();

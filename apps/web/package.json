@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fontsource-variable/google-sans": "^5.2.1",
     "@hello-pangea/dnd": "^17.0.0",
     "@signage/types": "workspace:*",
     "@supabase/ssr": "^0.6.1",

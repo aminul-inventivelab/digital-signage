@@ -1,6 +1,7 @@
 package dev.signage.tv
 
 import android.app.Application
+import android.util.Log
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -11,8 +12,9 @@ import io.github.jan.supabase.gotrue.Auth
 import io.github.jan.supabase.gotrue.auth
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.from
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.result.PostgrestResult
-import io.github.jan.supabase.postgrest.query.Order
+import io.github.jan.supabase.postgrest.rpc
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,6 +27,11 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.util.UUID
 import kotlin.random.Random
+
+
+
+
+private const val LOG_TAG = "SignageTV"
 
 private val Application.deviceDataStore by preferencesDataStore(name = "signage_device")
 
@@ -56,6 +63,8 @@ sealed interface MainUiState {
         val deviceId: String,
         val playlistName: String?,
         val slides: List<PlaybackSlide>,
+        /** True when tv_get_playback_slides rejected the caller (lost anon session vs registered_session_id). */
+        val isRegistrationMismatch: Boolean = false,
     ) : MainUiState
 
     data class Error(val message: String) : MainUiState
@@ -79,30 +88,26 @@ data class DeviceRow(
 )
 
 @Serializable
-private data class DevicePlaylistRow(
-    @SerialName("playlist_id") val playlistId: String,
-    @SerialName("is_active") val isActive: Boolean,
+private data class TvGetPlaybackParams(
+    @SerialName("p_device_id")
+    val pDeviceId: String,
 )
 
 @Serializable
-private data class PlaylistItemSimpleRow(
-    val id: String,
-    @SerialName("sort_order") val sortOrder: Int,
-    @SerialName("duration_seconds") val durationSeconds: Int? = null,
-    @SerialName("media_id") val mediaId: String,
+private data class TvGetPlaybackResult(
+    val ok: Boolean,
+    val playlistName: String? = null,
+    val slides: List<TvGetPlaybackSlide> = emptyList(),
 )
 
 @Serializable
-private data class MediaRow(
-    val id: String,
-    @SerialName("storage_path") val storagePath: String,
-    @SerialName("file_type") val fileType: String,
-)
-
-@Serializable
-private data class PlaylistNameRow(
-    val id: String,
-    val name: String,
+private data class TvGetPlaybackSlide(
+    @SerialName("fileType")
+    val fileType: String,
+    @SerialName("durationSeconds")
+    val durationSeconds: Int? = null,
+    @SerialName("storagePath")
+    val storagePath: String,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -114,6 +119,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             supabaseUrl = BuildConfig.SUPABASE_URL,
             supabaseKey = BuildConfig.SUPABASE_ANON_KEY,
         ) {
+            httpEngine = KtorClientProvider.unsafeHttpClient.engine
             install(Auth)
             install(Postgrest)
         }
@@ -248,13 +254,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 while (isActive) {
                     try {
                         _state.value = loadPlaybackState(deviceId, deviceName)
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                        Log.e(LOG_TAG, "loadPlaybackState failed", e)
                         _state.value =
                             MainUiState.Playback(
                                 deviceName = deviceName,
                                 deviceId = deviceId,
                                 playlistName = null,
                                 slides = emptyList(),
+                                isRegistrationMismatch = false,
                             )
                     }
                     delay(4_000)
@@ -266,56 +274,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         deviceId: String,
         deviceName: String,
     ): MainUiState.Playback {
-        val assignment =
-            supabase
-                .from("device_playlists")
-                .select {
-                    filter {
-                        eq("device_id", deviceId)
-                        eq("is_active", true)
-                    }
-                }.decodeList<DevicePlaylistRow>()
-                .firstOrNull()
-        if (assignment == null) {
-            return MainUiState.Playback(deviceName, deviceId, null, emptyList())
-        }
-        val playlistId = assignment.playlistId
-        val playlistName =
-            supabase
-                .from("playlists")
-                .select {
-                    filter { eq("id", playlistId) }
-                }.decodeList<PlaylistNameRow>()
-                .firstOrNull()
-                ?.name
-
-        val items =
-            supabase
-                .from("playlist_items")
-                .select {
-                    filter { eq("playlist_id", playlistId) }
-                    order(column = "sort_order", order = Order.ASCENDING)
-                }.decodeList<PlaylistItemSimpleRow>()
-
-        val slides = mutableListOf<PlaybackSlide>()
-        for (item in items) {
-            val mediaList =
-                supabase
-                    .from("media")
-                    .select {
-                        filter { eq("id", item.mediaId) }
-                    }.decodeList<MediaRow>()
-            val m = mediaList.firstOrNull() ?: continue
-            if (m.storagePath.isBlank()) continue
-            slides.add(
-                PlaybackSlide(
-                    url = publicMediaUrl(m.storagePath),
-                    fileType = m.fileType,
-                    durationSeconds = item.durationSeconds,
-                ),
+        val res =
+            supabase.postgrest.rpc("tv_get_playback_slides", TvGetPlaybackParams(pDeviceId = deviceId))
+                .decodeAs<TvGetPlaybackResult>()
+        Log.d(LOG_TAG, "tv_get_playback_slides response: ok=${res.ok}, playlistName=${res.playlistName}, slidesCount=${res.slides.size}")
+        if (!res.ok) {
+            Log.w(
+                LOG_TAG,
+                "tv_get_playback_slides: this Supabase user is not the registering session for device $deviceId. Use Reset on the TV and link again, or re-pair.",
+            )
+            return MainUiState.Playback(
+                deviceName = deviceName,
+                deviceId = deviceId,
+                playlistName = null,
+                slides = emptyList(),
+                isRegistrationMismatch = true,
             )
         }
-        return MainUiState.Playback(deviceName, deviceId, playlistName, slides)
+        val slides =
+            res.slides.map { s ->
+                PlaybackSlide(
+                    url = publicMediaUrl(s.storagePath),
+                    fileType = s.fileType,
+                    durationSeconds = s.durationSeconds,
+                )
+            }
+        return MainUiState.Playback(
+            deviceName = deviceName,
+            deviceId = deviceId,
+            playlistName = res.playlistName,
+            slides = slides,
+            isRegistrationMismatch = false,
+        )
     }
 
     private fun publicMediaUrl(storagePath: String): String {

@@ -25,8 +25,8 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        val supabaseUrl = (project.findProperty("supabase.url") ?: "").toString().trim()
-        val supabaseAnonKey = (project.findProperty("supabase.anon.key") ?: "").toString().trim()
+        val supabaseUrl = (localProperties.getProperty("supabase.url") ?: "").trim()
+        val supabaseAnonKey = (localProperties.getProperty("supabase.anon.key") ?: "").trim()
 
         buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
@@ -91,7 +91,9 @@ dependencies {
 
     implementation("androidx.media3:media3-exoplayer:1.5.0")
     implementation("androidx.media3:media3-ui:1.5.0")
+    implementation("androidx.media3:media3-datasource-okhttp:1.5.0")
 
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.6.0")
 
     implementation("androidx.datastore:datastore-preferences:1.1.1")

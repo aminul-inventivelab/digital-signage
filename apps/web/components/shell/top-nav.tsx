@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { X } from "lucide-react";
+import { NavRadialSpinner } from "@/components/ui/nav-radial-spinner";
 import type { BrandConfig, NavItem } from "./types";
 import { assets } from "@/lib/config/assets";
 
@@ -18,13 +19,25 @@ function navMatches(path: string, pathname: string, end?: boolean): boolean {
   return pathname === path || pathname.startsWith(`${path}/`);
 }
 
+/** True if `destinationPath` is the route for this nav item (e.g. /playlists/foo → Playlists tab). */
+export function navItemMatchesDestination(
+  item: { path: string; end?: boolean },
+  destinationPath: string | null | undefined,
+): boolean {
+  if (!destinationPath) return false;
+  const useEnd = item.end ?? item.path === "/";
+  if (useEnd) return destinationPath === item.path;
+  return destinationPath === item.path || destinationPath.startsWith(`${item.path}/`);
+}
+
 interface TopNavBarProps {
   brand: BrandConfig;
   navItems: NavItem[];
   bottomNavItem?: NavItem;
+  pendingPath?: string | null;
 }
 
-export function TopNavBar({ brand, navItems, bottomNavItem }: TopNavBarProps) {
+export function TopNavBar({ brand, navItems, bottomNavItem, pendingPath }: TopNavBarProps) {
   const pathname = usePathname();
   const { name, subtitle, icon: BrandIcon, logoColor = "#2CA85A", logoUrl } = brand;
 
@@ -56,6 +69,7 @@ export function TopNavBar({ brand, navItems, bottomNavItem }: TopNavBarProps) {
       }}
     >
       <Link
+        prefetch
         href={HOME_PATH}
         style={{
           display: "flex",
@@ -139,22 +153,36 @@ export function TopNavBar({ brand, navItems, bottomNavItem }: TopNavBarProps) {
         {navItems.map((item) => {
           const { icon: Icon, label, path, end } = item;
           const active = navMatches(path, pathname, end ?? path === "/");
+          const showLoader = navItemMatchesDestination(item, pendingPath);
           return (
-            <Link key={path} href={path} style={linkStyle(active)} title={label}>
-              <Icon size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} style={{ flexShrink: 0 }} />
+            <Link prefetch href={path} key={path} style={linkStyle(active)} title={label}>
+              {showLoader ? (
+                <NavRadialSpinner
+                  size={NAV_ICON_SIZE}
+                  style={{ color: assets.themePrimary }}
+                  aria-hidden
+                />
+              ) : (
+                <Icon size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} style={{ flexShrink: 0 }} />
+              )}
               {label}
             </Link>
           );
         })}
         {bottomNavItem && (
           <Link
+            prefetch
             href={bottomNavItem.path}
             style={linkStyle(
               navMatches(bottomNavItem.path, pathname, bottomNavItem.end ?? bottomNavItem.path === "/"),
             )}
             title={bottomNavItem.label}
           >
-            <bottomNavItem.icon size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} style={{ flexShrink: 0 }} />
+            {navItemMatchesDestination(bottomNavItem, pendingPath) ? (
+              <NavRadialSpinner size={NAV_ICON_SIZE} style={{ color: assets.themePrimary }} aria-hidden />
+            ) : (
+              <bottomNavItem.icon size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} style={{ flexShrink: 0 }} />
+            )}
             {bottomNavItem.label}
           </Link>
         )}
@@ -169,9 +197,10 @@ interface MobileNavDrawerProps {
   bottomNavItem?: NavItem;
   open: boolean;
   onClose: () => void;
+  pendingPath?: string | null;
 }
 
-export function MobileNavDrawer({ brand, navItems, bottomNavItem, open, onClose }: MobileNavDrawerProps) {
+export function MobileNavDrawer({ brand, navItems, bottomNavItem, open, onClose, pendingPath }: MobileNavDrawerProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { name, subtitle, icon: BrandIcon, logoColor = "#2CA85A", logoUrl } = brand;
@@ -328,22 +357,36 @@ export function MobileNavDrawer({ brand, navItems, bottomNavItem, open, onClose 
           {navItems.map((item) => {
             const { icon: Icon, label, path, end } = item;
             const active = navMatches(path, pathname, end ?? path === "/");
+            const showLoader = navItemMatchesDestination(item, pendingPath);
             return (
-              <Link key={path} href={path} style={rowStyle(active)} onClick={onClose}>
-                <Icon size={18} strokeWidth={NAV_ICON_STROKE} style={{ flexShrink: 0 }} />
+              <Link prefetch key={path} href={path} style={rowStyle(active)} onClick={onClose}>
+                {showLoader ? (
+                  <NavRadialSpinner
+                    size={18}
+                    style={{ color: "rgba(255,255,255,0.95)" }}
+                    aria-hidden
+                  />
+                ) : (
+                  <Icon size={18} strokeWidth={NAV_ICON_STROKE} style={{ flexShrink: 0 }} />
+                )}
                 {label}
               </Link>
             );
           })}
           {bottomNavItem && (
             <Link
+              prefetch
               href={bottomNavItem.path}
               style={rowStyle(
                 navMatches(bottomNavItem.path, pathname, bottomNavItem.end ?? bottomNavItem.path === "/"),
               )}
               onClick={onClose}
             >
-              <bottomNavItem.icon size={18} strokeWidth={NAV_ICON_STROKE} style={{ flexShrink: 0 }} />
+              {navItemMatchesDestination(bottomNavItem, pendingPath) ? (
+                <NavRadialSpinner size={18} style={{ color: "rgba(255,255,255,0.95)" }} aria-hidden />
+              ) : (
+                <bottomNavItem.icon size={18} strokeWidth={NAV_ICON_STROKE} style={{ flexShrink: 0 }} />
+              )}
               {bottomNavItem.label}
             </Link>
           )}

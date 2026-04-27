@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
+import { useRouteNavigationPending } from "@/hooks/use-route-navigation-pending";
 import { TopBar } from "./top-bar";
 import { useBreakpoint } from "./use-breakpoint";
 import type { AppLayoutConfig, NavItem } from "./types";
@@ -16,6 +17,8 @@ interface AppLayoutProps extends AppLayoutConfig {
   searchPlaceholder?: string;
   topBarCenterSlot?: ReactNode;
   topBarRightSlot?: ReactNode;
+  /** Shown before notifications (e.g. Sync). */
+  topBarSyncControl?: ReactNode;
   userName?: string;
   languageLabel?: string;
   onLanguageClick?: () => void;
@@ -27,7 +30,7 @@ export function AppLayout({
   brand,
   getPageTitle = () => "",
   fullScreenPaths = [],
-  fontFamily = 'var(--font-poppins), Poppins, ui-sans-serif, system-ui, sans-serif',
+  fontFamily = 'var(--font-sans)',
   outerBg = "#1A3C6E",
   contentCardBg = "#F4F7FB",
   banner,
@@ -37,12 +40,14 @@ export function AppLayout({
   searchPlaceholder,
   topBarCenterSlot,
   topBarRightSlot,
+  topBarSyncControl,
   userName,
   languageLabel,
   onLanguageClick,
   children,
 }: AppLayoutProps) {
   const pathname = usePathname();
+  const { pendingPath } = useRouteNavigationPending();
   const { isMobile } = useBreakpoint();
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
@@ -131,6 +136,7 @@ export function AppLayout({
             <TopBar
               title={title}
               titleIcon={titleIcon}
+              pendingPath={pendingPath}
               brand={brand}
               navItems={navItems}
               bottomNavItem={bottomNavItem}
@@ -142,6 +148,7 @@ export function AppLayout({
               centerSlot={topBarCenterSlot}
               searchPlaceholder={searchPlaceholder}
               rightSlot={topBarRightSlot}
+              syncControl={topBarSyncControl}
               languageLabel={languageLabel}
               onLanguageClick={onLanguageClick}
               onMobileMenuOpen={() => setIsMobileNavOpen(true)}

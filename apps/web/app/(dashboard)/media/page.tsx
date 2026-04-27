@@ -1,18 +1,13 @@
+"use client";
+
 import { MediaLibrary } from "@/components/media-library";
-import { getSupabaseServerClient } from "@/lib/supabase/server";
-import type { Media } from "@signage/types";
+import { useConsoleDataStore } from "@/stores/console-data-store";
 
-export default async function MediaPage() {
-  const supabase = await getSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+const publicBaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 
-  if (!user) {
-    return null;
-  }
+export default function MediaPage() {
+  const ownerId = useConsoleDataStore((s) => s.ownerId);
 
-  const publicBaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!publicBaseUrl) {
     return (
       <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
@@ -21,11 +16,14 @@ export default async function MediaPage() {
     );
   }
 
-  const { data } = await supabase
-    .from("media")
-    .select("*")
-    .eq("owner_id", user.id)
-    .order("created_at", { ascending: false });
+  if (!ownerId) {
+    return (
+      <div className="space-y-4">
+        <div className="h-8 w-32 animate-pulse rounded-md bg-muted" />
+        <div className="h-56 animate-pulse rounded-xl bg-muted/60" />
+      </div>
+    );
+  }
 
-  return <MediaLibrary userId={user.id} initialMedia={(data as Media[]) ?? []} publicBaseUrl={publicBaseUrl} />;
+  return <MediaLibrary userId={ownerId} publicBaseUrl={publicBaseUrl} />;
 }

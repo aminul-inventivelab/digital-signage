@@ -2,6 +2,14 @@
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ["@signage/types"],
+  experimental: {
+    optimizePackageImports: ["lucide-react"],
+    // Reuse recent RSC payloads on client navigations (softens repeat clicks between pages).
+    staleTimes: {
+      dynamic: 30,
+      static: 180,
+    },
+  },
   images: {
     remotePatterns: [
       {

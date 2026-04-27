@@ -1,13 +1,14 @@
 "use client";
 
 import { useRef, useEffect, useState } from "react";
-import { Bell, ChevronDown, Search, Menu, User, Settings, LogOut } from "lucide-react";
+import { Bell, ChevronDown, LogOut, Menu, Search } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useNotifications } from "./notifications-context";
 import { useSettings } from "./settings-context";
 import { MobileNavDrawer, TopNavBar } from "./top-nav";
 import type { BrandConfig, NavItem } from "./types";
+import { NavRadialSpinner } from "@/components/ui/nav-radial-spinner";
 import { assets } from "@/lib/config/assets";
 import { ConfirmModal } from "./confirm-modal";
 
@@ -215,7 +216,7 @@ function NotificationBellDropdown() {
               textAlign: "center",
             }}
           >
-            In-app notifications are off. Turn them on in Settings.
+            In-app notifications are off.
           </div>
         </div>
       )}
@@ -226,6 +227,8 @@ function NotificationBellDropdown() {
 export interface TopBarProps {
   title: string | ((pathname: string) => string);
   titleIcon?: LucideIcon;
+  /** Destination pathname while a client navigation is in flight (shows loaders on matching nav icons). */
+  pendingPath?: string | null;
   brand: BrandConfig;
   navItems: NavItem[];
   bottomNavItem?: NavItem;
@@ -237,6 +240,8 @@ export interface TopBarProps {
   centerSlot?: React.ReactNode;
   searchPlaceholder?: string;
   rightSlot?: React.ReactNode;
+  /** Placed before notifications / profile (e.g. Sync). */
+  syncControl?: React.ReactNode;
   languageLabel?: string;
   onLanguageClick?: () => void;
   onMobileMenuOpen: () => void;
@@ -258,7 +263,6 @@ function ProfileDropdown({
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const router = useRouter();
 
   const clearCloseTimeout = () => {
     if (closeTimeoutRef.current) {
@@ -293,11 +297,6 @@ function ProfileDropdown({
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open, isMobile]);
-
-  const handleNav = (path: string) => {
-    setOpen(false);
-    router.push(path);
-  };
 
   const handleSignOutClick = () => {
     setOpen(false);
@@ -438,27 +437,6 @@ function ProfileDropdown({
           </div>
           <button
             type="button"
-            className="topbar-dropdown-item"
-            style={itemStyle}
-            onClick={() => handleNav("/profile")}
-            role="menuitem"
-          >
-            <User size={14} color="#6B7280" strokeWidth={2} />
-            Profile
-          </button>
-          <button
-            type="button"
-            className="topbar-dropdown-item"
-            style={itemStyle}
-            onClick={() => handleNav("/settings")}
-            role="menuitem"
-          >
-            <Settings size={14} color="#6B7280" strokeWidth={2} />
-            Settings
-          </button>
-          <div style={{ height: "0.0625rem", background: "#E8ECF0", margin: "0.25rem 0" }} />
-          <button
-            type="button"
             className="topbar-dropdown-item topbar-dropdown-item--signout"
             style={{ ...itemStyle, color: "#DC2626" }}
             onClick={handleSignOutClick}
@@ -486,6 +464,7 @@ function ProfileDropdown({
 export function TopBar({
   title,
   titleIcon: TitleIcon,
+  pendingPath = null,
   brand,
   navItems,
   bottomNavItem,
@@ -497,6 +476,7 @@ export function TopBar({
   centerSlot,
   searchPlaceholder,
   rightSlot,
+  syncControl,
   languageLabel,
   onLanguageClick,
   onMobileMenuOpen,
@@ -514,6 +494,7 @@ export function TopBar({
           bottomNavItem={bottomNavItem}
           open={mobileNavOpen}
           onClose={onMobileNavClose}
+          pendingPath={pendingPath}
         />
       <header
         style={{
@@ -558,7 +539,16 @@ export function TopBar({
             minWidth: 0,
           }}
         >
-          {TitleIcon && <TitleIcon size={18} strokeWidth={1.75} style={{ flexShrink: 0, color: "#374151" }} />}
+          {pendingPath != null ? (
+            <NavRadialSpinner
+              size={18}
+              style={{ color: "#374151" }}
+              aria-label="Loading page"
+              aria-hidden={false}
+            />
+          ) : (
+            TitleIcon && <TitleIcon size={18} strokeWidth={1.75} style={{ flexShrink: 0, color: "#374151" }} />
+          )}
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titleText}</span>
         </span>
         {languageLabel != null && onLanguageClick && (
@@ -583,6 +573,7 @@ export function TopBar({
         )}
         {rightSlot ?? (
           <>
+            {syncControl}
             <NotificationBellDropdown />
             <ProfileDropdown userName={userName} profileSubtext={profileSubtext} onSignOut={onSignOut} isMobile />
           </>
@@ -637,7 +628,7 @@ export function TopBar({
         flexShrink: 0,
       }}
     >
-      <TopNavBar brand={brand} navItems={navItems} bottomNavItem={bottomNavItem} />
+      <TopNavBar brand={brand} navItems={navItems} bottomNavItem={bottomNavItem} pendingPath={pendingPath} />
       {centerContent}
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
         {languageLabel != null && onLanguageClick && (
@@ -664,6 +655,7 @@ export function TopBar({
         )}
         {rightSlot ?? (
           <>
+            {syncControl}
             <NotificationBellDropdown />
             <ProfileDropdown userName={userName} profileSubtext={profileSubtext} onSignOut={onSignOut} />
           </>

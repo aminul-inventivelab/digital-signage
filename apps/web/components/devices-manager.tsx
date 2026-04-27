@@ -1,65 +1,90 @@
 "use client";
 
-import type { Device } from "@signage/types";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Device, DeviceStatus } from "@signage/types";
+import { LayoutGrid, Link2, List, Monitor, Search, Settings, Trash2, Tv, Wifi, WifiOff } from "lucide-react";
+import Link from "next/link";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { useConsoleSync } from "@/components/console/console-sync-provider";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import type { DeviceWithAssignments } from "@/lib/console-sync";
+import { cn } from "@/lib/utils";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { useConsoleDataStore } from "@/stores/console-data-store";
 
-interface PlaylistOption {
-  id: string;
-  name: string;
+type StatusFilter = "all" | DeviceStatus;
+
+function formatLastSeen(iso: string | null): string {
+  if (!iso) return "Never seen";
+  const d = new Date(iso);
+  const diff = Date.now() - d.getTime();
+  const sec = Math.floor(diff / 1000);
+  const min = Math.floor(sec / 60);
+  const hr = Math.floor(min / 60);
+  const day = Math.floor(hr / 24);
+  if (day > 30) return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  if (day > 0) return day === 1 ? "Yesterday" : `${day} days ago`;
+  if (hr > 0) return `${hr}h ago`;
+  if (min > 0) return `${min}m ago`;
+  return "Just now";
 }
 
-type DeviceWithAssignments = Device & {
-  device_playlists: Array<{ playlist_id: string; is_active: boolean }> | null;
-};
-
-interface DevicesManagerProps {
-  userId: string;
-  initialDevices: DeviceWithAssignments[];
-  playlists: PlaylistOption[];
+function statusLabel(status: DeviceStatus): string {
+  switch (status) {
+    case "online":
+      return "Online";
+    case "offline":
+      return "Offline";
+    case "pending_pairing":
+      return "Pending";
+    default:
+      return status;
+  }
 }
 
-export function DevicesManager({ userId, initialDevices, playlists }: DevicesManagerProps) {
+function StatusBadge({ status }: { status: DeviceStatus }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-[0.6875rem] font-semibold uppercase tracking-wide",
+        status === "online" && "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300",
+        status === "offline" && "bg-muted text-muted-foreground",
+        status === "pending_pairing" && "bg-amber-500/15 text-amber-900 dark:text-amber-200",
+      )}
+    >
+      {statusLabel(status)}
+    </span>
+  );
+}
+
+const STATUS_FILTERS: { id: StatusFilter; label: string; icon: typeof Monitor }[] = [
+  { id: "all", label: "All", icon: Monitor },
+  { id: "online", label: "Online", icon: Wifi },
+  { id: "offline", label: "Offline", icon: WifiOff },
+  { id: "pending_pairing", label: "Pending", icon: Link2 },
+];
+
+export function DevicesManager() {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
-  const [devices, setDevices] = useState<DeviceWithAssignments[]>(initialDevices);
+  const devices = useConsoleDataStore((s) => s.devices) as DeviceWithAssignments[];
+
+  const { syncNow } = useConsoleSync();
+
   const [pairingCode, setPairingCode] = useState("");
   const [friendlyName, setFriendlyName] = useState("");
   const [linking, setLinking] = useState(false);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [view, setView] = useState<"grid" | "list">("grid");
+  const [devicePendingDelete, setDevicePendingDelete] = useState<Device | null>(null);
+  const [deleteInProgress, setDeleteInProgress] = useState(false);
 
-  const refreshDevices = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("devices")
-      .select("*, device_playlists(playlist_id,is_active)")
-      .eq("owner_id", userId)
-      .order("created_at", { ascending: false });
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    setDevices((data as DeviceWithAssignments[]) ?? []);
-  }, [supabase, userId]);
-
-  useEffect(() => {
-    const channel = supabase
-      .channel("devices-live")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "devices", filter: `owner_id=eq.${userId}` },
-        () => {
-          void refreshDevices();
-        },
-      )
-      .subscribe();
-
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [supabase, userId, refreshDevices]);
+  const refreshAfterMutation = useCallback(async () => {
+    await syncNow();
+  }, [syncNow]);
 
   async function linkDevice() {
     setLinking(true);
@@ -80,7 +105,7 @@ export function DevicesManager({ userId, initialDevices, playlists }: DevicesMan
       toast.success(`Linked device ${(data as Device).name}`);
       setPairingCode("");
       setFriendlyName("");
-      await refreshDevices();
+      await refreshAfterMutation();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to link device";
       toast.error(message);
@@ -89,198 +114,315 @@ export function DevicesManager({ userId, initialDevices, playlists }: DevicesMan
     }
   }
 
-  async function renameDevice(id: string, name: string) {
-    const { error } = await supabase.from("devices").update({ name }).eq("id", id);
-    if (error) {
-      toast.error(error.message);
-      return;
+  const confirmDeleteDevice = useCallback(async () => {
+    if (!devicePendingDelete) return;
+    setDeleteInProgress(true);
+    try {
+      const { error } = await supabase.from("devices").delete().eq("id", devicePendingDelete.id);
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      toast.success("Device removed");
+      setDevicePendingDelete(null);
+      await refreshAfterMutation();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to remove device";
+      toast.error(message);
+    } finally {
+      setDeleteInProgress(false);
     }
-    toast.success("Device renamed");
-    await refreshDevices();
-  }
+  }, [devicePendingDelete, refreshAfterMutation, supabase]);
 
-  async function deleteDevice(id: string) {
-    const { error } = await supabase.from("devices").delete().eq("id", id);
-    if (error) {
-      toast.error(error.message);
-      return;
+  const filtered = useMemo(() => {
+    let list = devices;
+    if (statusFilter !== "all") {
+      list = list.filter((d) => d.status === statusFilter);
     }
-    toast.success("Device removed");
-    await refreshDevices();
-  }
+    const q = search.trim().toLowerCase();
+    if (q) {
+      list = list.filter((d) => d.name.toLowerCase().includes(q));
+    }
+    return list;
+  }, [devices, statusFilter, search]);
 
-  async function setActivePlaylist(deviceId: string, playlistId: string) {
-    const { error } = await supabase.from("device_playlists").upsert(
-      {
-        device_id: deviceId,
-        playlist_id: playlistId,
-        is_active: true,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "device_id,playlist_id" },
-    );
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    const { error: deactivateError } = await supabase
-      .from("device_playlists")
-      .update({ is_active: false })
-      .eq("device_id", deviceId)
-      .neq("playlist_id", playlistId);
-    if (deactivateError) {
-      toast.error(deactivateError.message);
-      return;
-    }
-    toast.success("Playlist assigned");
-    await refreshDevices();
-  }
+  const onlineCount = useMemo(() => devices.filter((d) => d.status === "online").length, [devices]);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Devices</h1>
-        <p className="mt-2 text-muted-foreground">
-          Enter the six-digit code shown on the TV (after it signs in anonymously). Status updates stream over Realtime.
-        </p>
-      </div>
+    <div className="flex min-h-[min(70vh,720px)] flex-col gap-6 lg:flex-row lg:gap-8">
+      <aside className="w-full shrink-0 space-y-4 lg:w-56 xl:w-60">
+        <div className="rounded-xl border border-border bg-card p-3 shadow-sm">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search screens…"
+              className="h-9 border-border bg-background pl-8 text-sm"
+              aria-label="Search devices"
+            />
+          </div>
+        </div>
 
-      <Card className="border-border bg-card">
-        <CardHeader>
-          <CardTitle>Link a TV</CardTitle>
-          <CardDescription>The Android app registers the code first; you claim it here.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-3">
-          <div className="space-y-2 md:col-span-1">
-            <Label htmlFor="code">Pairing code</Label>
-            <Input
-              id="code"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              maxLength={6}
-              value={pairingCode}
-              onChange={(e) => setPairingCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-              placeholder="123456"
-            />
-          </div>
-          <div className="space-y-2 md:col-span-1">
-            <Label htmlFor="friendly">Display name</Label>
-            <Input
-              id="friendly"
-              value={friendlyName}
-              onChange={(e) => setFriendlyName(e.target.value)}
-              placeholder="Lobby screen"
-            />
-          </div>
-          <div className="flex items-end">
-            <Button className="w-full" onClick={() => void linkDevice()} disabled={linking}>
+        <div className="rounded-xl border border-border bg-card p-3 shadow-sm">
+          <p className="mb-3 text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">Link a screen</p>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="pair-code" className="text-xs">
+                Pairing code
+              </Label>
+              <Input
+                id="pair-code"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                value={pairingCode}
+                onChange={(e) => setPairingCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="123456"
+                className="h-9 font-mono text-sm tracking-widest"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pair-name" className="text-xs">
+                Display name
+              </Label>
+              <Input
+                id="pair-name"
+                value={friendlyName}
+                onChange={(e) => setFriendlyName(e.target.value)}
+                placeholder="Lobby screen"
+                className="h-9 text-sm"
+              />
+            </div>
+            <Button type="button" className="h-10 w-full gap-2 font-semibold shadow-sm" onClick={() => void linkDevice()} disabled={linking}>
+              <Tv className="h-4 w-4" strokeWidth={2.25} />
               {linking ? "Linking…" : "Link device"}
             </Button>
           </div>
-        </CardContent>
-      </Card>
+          <p className="mt-3 text-[0.6875rem] leading-relaxed text-muted-foreground">
+            Enter the six-digit code from the TV after it signs in. List is cached locally—use Sync in the header to refresh.
+          </p>
+        </div>
 
-      <div className="grid gap-4">
-        {devices.length === 0 ? (
-          <Card className="border-dashed border-border bg-card/60">
-            <CardHeader>
-              <CardTitle>No devices yet</CardTitle>
-              <CardDescription>Launch the TV app, note the pairing code, then link it from this page.</CardDescription>
-            </CardHeader>
-          </Card>
-        ) : (
-          devices.map((device) => {
-            const activePlaylistId =
-              device.device_playlists?.find((row) => row.is_active)?.playlist_id ?? "";
-            return (
-              <DeviceRow
-                key={device.id}
-                device={device}
-                activePlaylistId={activePlaylistId}
-                playlists={playlists}
-                onRename={(name) => void renameDevice(device.id, name)}
-                onDelete={() => void deleteDevice(device.id)}
-                onAssign={(playlistId) => void setActivePlaylist(device.id, playlistId)}
-              />
-            );
-          })
-        )}
+        <nav className="rounded-xl border border-border bg-muted/30 p-2" aria-label="Filter by status">
+          <p className="mb-2 px-2 text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">Status</p>
+          <ul className="space-y-0.5">
+            {STATUS_FILTERS.map(({ id, label, icon: Icon }) => {
+              const active = statusFilter === id;
+              return (
+                <li key={id}>
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter(id)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors",
+                      active
+                        ? "bg-card text-foreground shadow-sm ring-1 ring-border"
+                        : "text-muted-foreground hover:bg-muted/80 hover:text-foreground",
+                    )}
+                  >
+                    <Icon className="h-4 w-4 shrink-0 opacity-80" strokeWidth={1.75} />
+                    {label}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+      </aside>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex min-h-full flex-col rounded-xl border border-border bg-card shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                <span className="text-foreground">Screens</span>
+                <span className="text-muted-foreground/70">/</span>
+                <span className="rounded-md bg-muted/80 px-2 py-0.5 text-xs font-normal text-foreground">All devices</span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {filtered.length} screen{filtered.length === 1 ? "" : "s"}
+                {devices.length !== filtered.length ? ` (${devices.length} total)` : ""}
+                {devices.length > 0 && (
+                  <>
+                    {" "}
+                    · {onlineCount} online
+                  </>
+                )}
+              </p>
+            </div>
+            <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/30 p-0.5">
+              <button
+                type="button"
+                onClick={() => setView("grid")}
+                className={cn(
+                  "rounded-md p-1.5 text-muted-foreground transition-colors",
+                  view === "grid" ? "bg-card text-foreground shadow-sm" : "hover:text-foreground",
+                )}
+                aria-pressed={view === "grid"}
+                aria-label="Grid view"
+              >
+                <LayoutGrid className="h-4 w-4" strokeWidth={1.75} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("list")}
+                className={cn(
+                  "rounded-md p-1.5 text-muted-foreground transition-colors",
+                  view === "list" ? "bg-card text-foreground shadow-sm" : "hover:text-foreground",
+                )}
+                aria-pressed={view === "list"}
+                aria-label="List view"
+              >
+                <List className="h-4 w-4" strokeWidth={1.75} />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 p-4 sm:p-5">
+            {devices.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 py-16 text-center">
+                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+                  <Monitor className="h-7 w-7 text-muted-foreground" strokeWidth={1.5} />
+                </div>
+                <p className="text-sm font-medium text-foreground">No screens linked yet</p>
+                <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+                  Open the TV app, note the pairing code, then use <strong className="font-medium text-foreground">Link a screen</strong> on the
+                  left.
+                </p>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 py-16 text-center">
+                <p className="text-sm font-medium text-foreground">No screens match</p>
+                <p className="mt-1 max-w-sm text-xs text-muted-foreground">Try another search or status filter.</p>
+              </div>
+            ) : view === "grid" ? (
+              <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {filtered.map((device) => (
+                  <DeviceCard key={device.id} device={device} onRequestDelete={() => setDevicePendingDelete(device)} />
+                ))}
+              </ul>
+            ) : (
+              <ul className="divide-y divide-border rounded-lg border border-border bg-card">
+                {filtered.map((device) => (
+                  <DeviceListRow key={device.id} device={device} onRequestDelete={() => setDevicePendingDelete(device)} />
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
       </div>
+
+      <ConfirmDeleteDialog
+        open={devicePendingDelete !== null}
+        title={devicePendingDelete ? `Remove “${devicePendingDelete.name}”?` : "Remove screen?"}
+        description="This disconnects the screen from your account. The TV will need to be paired again to show your content."
+        confirmLabel="Remove screen"
+        onClose={() => !deleteInProgress && setDevicePendingDelete(null)}
+        onConfirm={confirmDeleteDevice}
+        isConfirming={deleteInProgress}
+      />
     </div>
   );
 }
 
-function DeviceRow({
-  device,
-  activePlaylistId,
-  playlists,
-  onRename,
-  onDelete,
-  onAssign,
-}: {
-  device: Device;
-  activePlaylistId: string;
-  playlists: PlaylistOption[];
-  onRename: (name: string) => void;
-  onDelete: () => void;
-  onAssign: (playlistId: string) => void;
-}) {
-  const [name, setName] = useState(device.name);
-
-  useEffect(() => {
-    setName(device.name);
-  }, [device.name]);
-
+function DeviceCard({ device, onRequestDelete }: { device: Device; onRequestDelete: () => void }) {
   return (
-    <Card className="border-border bg-card">
-      <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-        <div>
-          <CardTitle className="text-xl">{device.name}</CardTitle>
-          <CardDescription>
-            Status: <span className="font-medium text-foreground">{device.status}</span> · Last seen:{" "}
-            {device.last_seen ? new Date(device.last_seen).toLocaleString() : "—"}
-          </CardDescription>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="destructive" size="sm" onClick={onDelete}>
-            Delete
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-end">
-          <div className="flex-1 space-y-2">
-            <Label htmlFor={`name-${device.id}`}>Name</Label>
-            <div className="flex gap-2">
-              <Input id={`name-${device.id}`} value={name} onChange={(e) => setName(e.target.value)} />
-              <Button size="sm" variant="secondary" onClick={() => onRename(name)}>
-                Save
-              </Button>
-            </div>
+    <li className="relative flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-sm transition-shadow hover:shadow-md">
+      <Link
+        href={`/devices/${device.id}`}
+        className="absolute inset-0 z-0 rounded-xl ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={`Open screen: ${device.name}`}
+      />
+      <div className="pointer-events-none relative z-[1] border-b border-border bg-gradient-to-br from-muted/80 to-muted/40 px-4 py-5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-background shadow-sm ring-1 ring-border">
+            <Tv className="h-6 w-6 text-foreground" strokeWidth={1.5} />
           </div>
-          <div className="flex-1 space-y-2">
-            <Label htmlFor={`playlist-${device.id}`}>Active playlist</Label>
-            <select
-              id={`playlist-${device.id}`}
-              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-              value={activePlaylistId}
-              onChange={(e) => {
-                const value = e.target.value;
-                if (!value) return;
-                onAssign(value);
-              }}
-            >
-              <option value="">Select playlist…</option>
-              {playlists.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+          <div className="flex flex-col items-end gap-1">
+            <StatusBadge status={device.status} />
           </div>
         </div>
-        <p className="text-xs text-muted-foreground">Device ID: {device.id}</p>
-      </CardContent>
-    </Card>
+        <p className="mt-3 line-clamp-2 text-sm font-semibold leading-snug text-foreground" title={device.name}>
+          {device.name}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">Last seen · {formatLastSeen(device.last_seen)}</p>
+      </div>
+      <div className="relative z-[1] flex flex-1 flex-col gap-3 p-3 pointer-events-none">
+        <p className="truncate font-mono text-[0.625rem] text-muted-foreground" title={device.id}>
+          {device.id.slice(0, 8)}…
+        </p>
+      </div>
+      <div className="relative z-[2] flex items-center justify-between gap-2 border-t border-border bg-background px-3 py-2">
+        <Link
+          href={`/devices/${device.id}`}
+          className={cn(buttonVariants({ variant: "secondary", size: "sm" }), "h-8 gap-1.5")}
+        >
+          <Settings className="h-3.5 w-3.5" aria-hidden />
+          Settings
+        </Link>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 gap-1 text-destructive hover:bg-destructive/10"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onRequestDelete();
+          }}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Remove
+        </Button>
+      </div>
+    </li>
+  );
+}
+
+function DeviceListRow({ device, onRequestDelete }: { device: Device; onRequestDelete: () => void }) {
+  return (
+    <li className="relative flex flex-row items-center justify-between gap-3 px-3 py-4 transition-colors hover:bg-muted/40">
+      <Link
+        href={`/devices/${device.id}`}
+        className="absolute inset-0 z-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        aria-label={`Open screen: ${device.name}`}
+      />
+      <div className="relative z-[1] flex min-w-0 flex-1 items-start gap-3 pointer-events-none">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-muted ring-1 ring-border">
+          <Tv className="h-5 w-5 text-foreground" strokeWidth={1.5} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="truncate text-sm font-semibold text-foreground">{device.name}</p>
+            <StatusBadge status={device.status} />
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">Last seen · {formatLastSeen(device.last_seen)}</p>
+        </div>
+      </div>
+
+      <div className="relative z-[2] flex shrink-0 items-center gap-2">
+        <Link
+          href={`/devices/${device.id}`}
+          className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-1.5")}
+        >
+          <Settings className="h-3.5 w-3.5" aria-hidden />
+          Settings
+        </Link>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="text-destructive hover:bg-destructive/10"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onRequestDelete();
+          }}
+        >
+          Remove
+        </Button>
+      </div>
+    </li>
   );
 }

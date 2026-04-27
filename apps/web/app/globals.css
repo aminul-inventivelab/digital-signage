@@ -3,6 +3,8 @@
 @tailwind utilities;
 
 :root {
+  /* Google Sans (self-hosted via @fontsource-variable/google-sans) */
+  --font-sans: "Google Sans Variable", "Google Sans", ui-sans-serif, system-ui, sans-serif;
   --background: 220 23% 97%;
   --foreground: 222 47% 11%;
   --muted: 220 14% 93%;
@@ -29,7 +31,7 @@ body {
 }
 
 html {
-  font-family: var(--font-poppins), Poppins, ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-sans);
   /* ~14px at typical 16px UA default; scales Tailwind rem spacing/type with user font prefs */
   font-size: 87.5%;
 }
