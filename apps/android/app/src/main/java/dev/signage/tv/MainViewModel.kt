@@ -113,6 +113,7 @@ private data class TvGetPlaybackSlide(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val dataStore = application.deviceDataStore
     private var playbackObserveJob: Job? = null
+    private var signageExo: SignageExoController? = null
 
     private val supabase by lazy {
         createSupabaseClient(
@@ -270,6 +271,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
+    private fun ensureSignageExo() {
+        if (signageExo == null) {
+            signageExo = SignageExoController(getApplication())
+        }
+    }
+
+    fun exoForPlayback(): SignageExoController {
+        ensureSignageExo()
+        return signageExo!!
+    }
+
+    fun onPlaybackSlideContext(
+        currentIndex: Int,
+        slides: List<PlaybackSlide>,
+    ) {
+        if (slides.isEmpty()) {
+            return
+        }
+        val n = slides.size
+        val next = slides[(currentIndex + 1) % n]
+        if (next.fileType == "video") {
+            signageExo?.requestPrefetchIfVideo(next.url)
+        }
+    }
+
     private suspend fun loadPlaybackState(
         deviceId: String,
         deviceName: String,
@@ -320,6 +346,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun resetRegistration() {
         playbackObserveJob?.cancel()
         playbackObserveJob = null
+        signageExo?.release()
+        signageExo = null
         viewModelScope.launch {
             runCatching {
                 dataStore.edit { prefs ->
@@ -333,4 +361,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun generatePairingCode(): String = Random.nextInt(0, 1_000_000).toString().padStart(6, '0')
+
+    override fun onCleared() {
+        super.onCleared()
+        playbackObserveJob?.cancel()
+        signageExo?.release()
+        signageExo = null
+    }
 }

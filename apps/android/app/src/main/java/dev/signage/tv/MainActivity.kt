@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
 
                         is MainUiState.AwaitingLink -> PairingScreen(ui)
 
-                        is MainUiState.Playback -> PlaybackScreen(ui)
+                        is MainUiState.Playback -> PlaybackScreen(state = ui, viewModel = viewModel)
                     }
                 }
             }
