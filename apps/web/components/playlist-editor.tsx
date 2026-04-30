@@ -24,6 +24,7 @@ import { Label } from "@/components/ui/label";
 import { useConsoleSync } from "@/components/console/console-sync-provider";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { PlaylistPreviewButton } from "@/components/playlist-preview";
 import { useConsoleDataStore } from "@/stores/console-data-store";
 
 const EMPTY_PLAYLIST_ITEMS: PlaylistItemWithMedia[] = [];
@@ -98,7 +99,6 @@ export function PlaylistEditor({ playlistId, initialName, publicBaseUrl }: Playl
   const allMedia = useConsoleDataStore((s) => s.media) as Media[];
   const [name, setName] = useState(initialName);
   const [items, setItems] = useState<PlaylistItemWithMedia[]>(cachedItems);
-  const [selectedMediaId, setSelectedMediaId] = useState("");
   const [savingName, setSavingName] = useState(false);
   const [librarySearch, setLibrarySearch] = useState("");
   const [libraryResetKey, setLibraryResetKey] = useState(0);
@@ -261,15 +261,6 @@ export function PlaylistEditor({ playlistId, initialName, publicBaseUrl }: Playl
     [addMediaAtIndex, items, persistOrder, removeItem],
   );
 
-  async function addFromSelect() {
-    if (!selectedMediaId) {
-      toast.error("Choose a media asset first.");
-      return;
-    }
-    await addMediaAtIndex(selectedMediaId, items.length);
-    setSelectedMediaId("");
-  }
-
   if (!publicBaseUrl) {
     return (
       <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
@@ -296,85 +287,63 @@ export function PlaylistEditor({ playlistId, initialName, publicBaseUrl }: Playl
           </ol>
         </nav>
 
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0 flex-1 space-y-2">
-            <Label htmlFor="playlist-title" className="sr-only">
-              Playlist name
-            </Label>
-            <Input
-              id="playlist-title"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="h-11 max-w-xl border-transparent bg-white text-xl font-semibold tracking-tight shadow-sm ring-1 ring-border focus-visible:ring-emerald-500/30 dark:bg-card"
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                className="rounded-full"
-                disabled={savingName || name.trim() === initialName.trim()}
-                onClick={() => void saveName()}
-              >
-                {savingName ? "Saving…" : "Save name"}
-              </Button>
-            </div>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <span className="inline-flex items-center rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm dark:bg-card">
-              {items.length} {items.length === 1 ? "item" : "items"}
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm dark:bg-card">
-              <Clock className="h-3.5 w-3.5" />
-              {formatDurationShort(totalSeconds)}
-            </span>
-            <Link
-              href="/devices"
-              className={cn(
-                buttonVariants({ size: "sm" }),
-                "inline-flex gap-2 rounded-full bg-emerald-600 font-semibold text-white hover:bg-emerald-700 hover:opacity-100",
-              )}
+        <div className="space-y-2">
+          <Label htmlFor="playlist-title" className="sr-only">
+            Playlist name
+          </Label>
+          <Input
+            id="playlist-title"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="h-11 max-w-xl border-transparent bg-white text-xl font-semibold tracking-tight shadow-sm ring-1 ring-border focus-visible:ring-emerald-500/30 dark:bg-card"
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="rounded-full"
+              disabled={savingName || name.trim() === initialName.trim()}
+              onClick={() => void saveName()}
             >
-              <Monitor className="h-4 w-4" />
-              Assign to screens
-            </Link>
+              {savingName ? "Saving…" : "Save name"}
+            </Button>
           </div>
         </div>
 
           <div className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm dark:bg-card">
             <div className="border-b border-border bg-muted/30 px-4 py-3">
-              <h2 className="text-sm font-semibold text-foreground">Playlist content</h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Drag rows to reorder. Drop assets from the library on the right, or pick below.
-              </p>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <h2 className="text-sm font-semibold text-foreground">Playlist control</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Drag rows to reorder. Drop assets from the library on the right.
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 sm:pt-0.5">
+                  <span className="inline-flex items-center rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm dark:bg-card">
+                    {items.length} {items.length === 1 ? "item" : "items"}
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm dark:bg-card">
+                    <Clock className="h-3.5 w-3.5" />
+                    {formatDurationShort(totalSeconds)}
+                  </span>
+                  <PlaylistPreviewButton items={items} playlistName={name} publicBaseUrl={publicBaseUrl} />
+                  <Link
+                    href="/devices"
+                    className={cn(
+                      buttonVariants({ size: "sm" }),
+                      "inline-flex gap-2 rounded-full bg-emerald-600 font-semibold text-white hover:bg-emerald-700 hover:opacity-100",
+                    )}
+                  >
+                    <Monitor className="h-4 w-4" />
+                    Assign to screens
+                  </Link>
+                </div>
+              </div>
             </div>
 
             <div className="p-3 sm:p-4">
-              <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end">
-                <div className="min-w-0 flex-1 space-y-1.5">
-                  <Label htmlFor="quick-add" className="text-xs text-muted-foreground">
-                    Quick add from library
-                  </Label>
-                  <select
-                    id="quick-add"
-                    className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm shadow-sm"
-                    value={selectedMediaId}
-                    onChange={(e) => setSelectedMediaId(e.target.value)}
-                  >
-                    <option value="">Select media…</option>
-                    {allMedia.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.original_filename ?? m.storage_path}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <Button type="button" className="shrink-0 bg-emerald-600 hover:bg-emerald-700" onClick={() => void addFromSelect()}>
-                  <Plus className="mr-1.5 h-4 w-4" />
-                  Add clip
-                </Button>
-              </div>
-
               <Droppable droppableId="playlist-main">
                 {(dropProvided) => (
                   <div ref={dropProvided.innerRef} {...dropProvided.droppableProps} className="overflow-x-auto">
@@ -394,7 +363,7 @@ export function PlaylistEditor({ playlistId, initialName, publicBaseUrl }: Playl
                         <div className="rounded-xl border border-dashed border-border bg-muted/15 px-4 py-14 text-center">
                           <p className="text-sm font-medium text-foreground">Nothing in this playlist yet</p>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            Drag files from the asset panel, use Quick add, or upload on the{" "}
+                            Drag files from the asset panel, or upload on the{" "}
                             <Link href="/media" className="font-medium text-emerald-700 underline-offset-4 hover:underline">
                               Media
                             </Link>{" "}
@@ -519,7 +488,7 @@ export function PlaylistEditor({ playlistId, initialName, publicBaseUrl }: Playl
               />
             </div>
           </div>
-          <div className="max-h-[min(520px,calc(100vh-280px))] overflow-y-auto p-3">
+          <div className="max-h-[min(520px,55vh)] overflow-y-auto p-3">
             <Droppable droppableId="playlist-library" key={libraryResetKey}>
               {(libProvided) => (
                 <ul ref={libProvided.innerRef} {...libProvided.droppableProps} className="space-y-2">

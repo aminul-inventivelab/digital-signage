@@ -47,6 +47,11 @@ export type ConsoleSnapshot = {
  * Single bulk pull from Supabase (devices, playlists, media, all playlist items for those playlists).
  */
 export async function pullConsoleData(supabase: SupabaseClient, userId: string): Promise<ConsoleSnapshot> {
+  const { error: staleErr } = await supabase.rpc("mark_stale_devices_offline");
+  if (staleErr) {
+    console.warn("[pullConsoleData] mark_stale_devices_offline:", staleErr.message);
+  }
+
   const [devicesRes, playlistsRes, mediaRes] = await Promise.all([
     supabase
       .from("devices")

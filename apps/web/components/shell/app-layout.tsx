@@ -71,6 +71,7 @@ export function AppLayout({
   if (isFullScreen) {
     return (
       <div
+        className="dashboard-shell-root"
         style={{
           fontFamily,
           height: "100vh",
@@ -104,7 +105,7 @@ export function AppLayout({
   } as const;
 
   return (
-    <div style={outerStyle}>
+    <div className="dashboard-shell-root" style={outerStyle}>
       {banner}
       <div
         style={{
@@ -159,6 +160,7 @@ export function AppLayout({
                 flex: 1,
                 minHeight: 0,
                 overflowY: "auto",
+                overscrollBehavior: "contain",
                 padding: isMobile ? "0.875rem" : "1.25rem",
               }}
             >

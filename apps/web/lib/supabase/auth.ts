@@ -9,7 +9,7 @@ import { getSupabaseServerClient } from "./server";
  * PostgREST/RLS still validates the JWT on each query; middleware already gates routes.
  */
 export const getServerAuth = cache(async (): Promise<{ supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>; user: User | null }> => {
-  const supabase = await getSupabaseServerClient();
+  const supabase = getSupabaseServerClient();
   const {
     data: { session },
   } = await supabase.auth.getSession();

@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { getSupabaseConnectEnv } from "@/lib/supabase/env";
 
 const PROTECTED_PREFIXES = ["/devices", "/playlists", "/media", "/dashboard", "/profile", "/settings"];
 
@@ -14,8 +15,9 @@ export async function middleware(request: NextRequest) {
     request: { headers: request.headers },
   });
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const connect = getSupabaseConnectEnv();
+  const supabaseUrl = connect?.url;
+  const supabaseAnonKey = connect?.anonKey;
 
   if (!supabaseUrl || !supabaseAnonKey) {
     if (isProtectedPath(request.nextUrl.pathname)) {

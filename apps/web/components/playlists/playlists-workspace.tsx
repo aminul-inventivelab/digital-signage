@@ -1,12 +1,17 @@
 "use client";
 
 import type { Playlist } from "@signage/types";
-import { FolderOpen, Home, ListVideo, Search } from "lucide-react";
+import { FolderOpen, Home, ListVideo, Search, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useMemo, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useCallback, useMemo, useState } from "react";
+import { toast } from "sonner";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { useConsoleSync } from "@/components/console/console-sync-provider";
 import { CreatePlaylistForm } from "@/components/create-playlist-form";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { useConsoleDataStore } from "@/stores/console-data-store";
 
@@ -21,10 +26,15 @@ function formatDurationShort(totalSec: number): string {
 
 export function PlaylistsWorkspace({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const { syncNow } = useConsoleSync();
   const ownerId = useConsoleDataStore((s) => s.ownerId);
   const playlists = useConsoleDataStore((s) => s.playlists) as Playlist[];
   const playlistItemsByPlaylistId = useConsoleDataStore((s) => s.playlistItemsByPlaylistId);
   const [query, setQuery] = useState("");
+  const [playlistPendingDelete, setPlaylistPendingDelete] = useState<Playlist | null>(null);
+  const [deleteInProgress, setDeleteInProgress] = useState(false);
 
   const sorted = useMemo(
     () => [...playlists].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
@@ -41,6 +51,30 @@ export function PlaylistsWorkspace({ children }: { children: React.ReactNode }) 
     const m = pathname.match(/^\/playlists\/([^/]+)/);
     return m?.[1] && m[1] !== "new" ? m[1] : null;
   }, [pathname]);
+
+  const confirmDeletePlaylist = useCallback(async () => {
+    if (!playlistPendingDelete) return;
+    setDeleteInProgress(true);
+    try {
+      const deletedId = playlistPendingDelete.id;
+      const { error } = await supabase.from("playlists").delete().eq("id", deletedId);
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      toast.success("Playlist deleted");
+      setPlaylistPendingDelete(null);
+      await syncNow();
+      if (activePlaylistId === deletedId) {
+        router.push("/playlists");
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to delete playlist";
+      toast.error(message);
+    } finally {
+      setDeleteInProgress(false);
+    }
+  }, [activePlaylistId, playlistPendingDelete, router, supabase, syncNow]);
 
   if (!ownerId) {
     return (
@@ -107,11 +141,11 @@ export function PlaylistsWorkspace({ children }: { children: React.ReactNode }) 
                   const totalSec = items.reduce((acc, row) => acc + (row.duration_seconds ?? 10), 0);
                   const isActive = activePlaylistId === p.id;
                   return (
-                    <li key={p.id}>
+                    <li key={p.id} className="group flex items-stretch gap-1">
                       <Link
                         href={`/playlists/${p.id}`}
                         className={cn(
-                          "flex items-center gap-2 rounded-lg px-2.5 py-2.5 text-sm transition-colors",
+                          "flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-2.5 text-sm transition-colors",
                           isActive
                             ? "bg-white text-foreground shadow-sm ring-1 ring-border dark:bg-card"
                             : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
@@ -130,6 +164,19 @@ export function PlaylistsWorkspace({ children }: { children: React.ReactNode }) 
                           {items.length} · {formatDurationShort(totalSec)}
                         </span>
                       </Link>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-auto shrink-0 px-2 text-muted-foreground opacity-70 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
+                        aria-label={`Delete playlist “${p.name}”`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setPlaylistPendingDelete(p);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </li>
                   );
                 })}
@@ -150,6 +197,16 @@ export function PlaylistsWorkspace({ children }: { children: React.ReactNode }) 
       </aside>
 
       <div className="min-h-0 min-w-0 flex-1 md:pl-6">{children}</div>
+
+      <ConfirmDeleteDialog
+        open={playlistPendingDelete !== null}
+        title={playlistPendingDelete ? `Delete “${playlistPendingDelete.name}”?` : "Delete playlist?"}
+        description="This permanently deletes the playlist and unassigns it from any screens. This cannot be undone."
+        confirmLabel="Delete playlist"
+        onClose={() => !deleteInProgress && setPlaylistPendingDelete(null)}
+        onConfirm={confirmDeletePlaylist}
+        isConfirming={deleteInProgress}
+      />
     </div>
   );
 }

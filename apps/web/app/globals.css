@@ -24,6 +24,11 @@ body {
   @apply bg-background text-foreground antialiased;
 }
 
+/* Reduce whole-page rubber-banding on dashboard routes without locking html/body height (that breaks nested flex + Next body children). */
+body:has(.dashboard-shell-root) {
+  overscroll-behavior-y: none;
+}
+
 *,
 *::before,
 *::after {

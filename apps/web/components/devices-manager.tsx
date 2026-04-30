@@ -11,9 +11,12 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { DeviceWithAssignments } from "@/lib/console-sync";
+import { useStaleOnlineTick } from "@/hooks/use-stale-online-tick";
+import { effectiveDeviceStatus } from "@/lib/device-status";
 import { cn } from "@/lib/utils";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useConsoleDataStore } from "@/stores/console-data-store";
+import { deviceTelemetrySummaryLine } from "@/components/device-telemetry-panel";
 
 type StatusFilter = "all" | DeviceStatus;
 
@@ -68,6 +71,7 @@ const STATUS_FILTERS: { id: StatusFilter; label: string; icon: typeof Monitor }[
 ];
 
 export function DevicesManager() {
+  useStaleOnlineTick();
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const devices = useConsoleDataStore((s) => s.devices) as DeviceWithAssignments[];
 
@@ -137,7 +141,7 @@ export function DevicesManager() {
   const filtered = useMemo(() => {
     let list = devices;
     if (statusFilter !== "all") {
-      list = list.filter((d) => d.status === statusFilter);
+      list = list.filter((d) => effectiveDeviceStatus(d) === statusFilter);
     }
     const q = search.trim().toLowerCase();
     if (q) {
@@ -146,7 +150,10 @@ export function DevicesManager() {
     return list;
   }, [devices, statusFilter, search]);
 
-  const onlineCount = useMemo(() => devices.filter((d) => d.status === "online").length, [devices]);
+  const onlineCount = useMemo(
+    () => devices.filter((d) => effectiveDeviceStatus(d) === "online").length,
+    [devices],
+  );
 
   return (
     <div className="flex min-h-[min(70vh,720px)] flex-col gap-6 lg:flex-row lg:gap-8">
@@ -327,6 +334,7 @@ export function DevicesManager() {
 }
 
 function DeviceCard({ device, onRequestDelete }: { device: Device; onRequestDelete: () => void }) {
+  const deviceSummary = deviceTelemetrySummaryLine(device);
   return (
     <li className="relative flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-sm transition-shadow hover:shadow-md">
       <Link
@@ -340,13 +348,18 @@ function DeviceCard({ device, onRequestDelete }: { device: Device; onRequestDele
             <Tv className="h-6 w-6 text-foreground" strokeWidth={1.5} />
           </div>
           <div className="flex flex-col items-end gap-1">
-            <StatusBadge status={device.status} />
+            <StatusBadge status={effectiveDeviceStatus(device)} />
           </div>
         </div>
         <p className="mt-3 line-clamp-2 text-sm font-semibold leading-snug text-foreground" title={device.name}>
           {device.name}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">Last seen · {formatLastSeen(device.last_seen)}</p>
+        {deviceSummary && (
+          <p className="line-clamp-1 text-xs text-muted-foreground/90" title={deviceSummary}>
+            {deviceSummary}
+          </p>
+        )}
       </div>
       <div className="relative z-[1] flex flex-1 flex-col gap-3 p-3 pointer-events-none">
         <p className="truncate font-mono text-[0.625rem] text-muted-foreground" title={device.id}>
@@ -381,6 +394,7 @@ function DeviceCard({ device, onRequestDelete }: { device: Device; onRequestDele
 }
 
 function DeviceListRow({ device, onRequestDelete }: { device: Device; onRequestDelete: () => void }) {
+  const deviceSummary = deviceTelemetrySummaryLine(device);
   return (
     <li className="relative flex flex-row items-center justify-between gap-3 px-3 py-4 transition-colors hover:bg-muted/40">
       <Link
@@ -395,9 +409,14 @@ function DeviceListRow({ device, onRequestDelete }: { device: Device; onRequestD
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="truncate text-sm font-semibold text-foreground">{device.name}</p>
-            <StatusBadge status={device.status} />
+            <StatusBadge status={effectiveDeviceStatus(device)} />
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">Last seen · {formatLastSeen(device.last_seen)}</p>
+          {deviceSummary && (
+            <p className="mt-0.5 line-clamp-1 max-w-md text-xs text-muted-foreground/90" title={deviceSummary}>
+              {deviceSummary}
+            </p>
+          )}
         </div>
       </div>
 

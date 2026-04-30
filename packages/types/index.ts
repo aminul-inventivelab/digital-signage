@@ -2,6 +2,9 @@
 
 export type DeviceStatus = "offline" | "online" | "pending_pairing";
 
+/** Dashboard setting; Android applies via Activity.requestedOrientation while playback runs. */
+export type DeviceScreenOrientation = "landscape" | "portrait";
+
 export type MediaFileType = "image" | "video" | "unknown";
 
 export interface Profile {
@@ -9,6 +12,9 @@ export interface Profile {
   full_name: string | null;
   created_at: string;
 }
+
+/** TV-reported diagnostics (varies by app version); see Android `DeviceTelemetryCollector`. */
+export type DeviceTelemetry = Record<string, unknown>;
 
 export interface Device {
   id: string;
@@ -19,6 +25,12 @@ export interface Device {
   status: DeviceStatus;
   last_seen: string | null;
   created_at: string;
+  /** Preferred playback orientation; default landscape when omitted (pre-migration rows). */
+  screen_orientation?: DeviceScreenOrientation;
+  /** Last payload from the screen app (JSON). */
+  telemetry?: DeviceTelemetry | null;
+  /** When `telemetry` was last written. */
+  telemetry_at?: string | null;
 }
 
 export interface Media {
