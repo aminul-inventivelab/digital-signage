@@ -5,6 +5,9 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import androidx.annotation.OptIn
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -39,6 +42,8 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.random.Random
 
@@ -185,6 +190,17 @@ private const val TELEMETRY_INTERVAL_MS = 120_000L
 /** Avoid double UI recovery when both activity resume and [android.content.Intent.ACTION_SCREEN_ON] fire. */
 private const val FOREGROUND_RECOVERY_DEBOUNCE_MS = 750L
 
+/**
+ * If nothing reports playback progress for this long while the app is foregrounded, assume the UI/player
+ * froze and run the same recover path as a dashboard playlist edit (fetch + remount).
+ */
+private const val PLAYBACK_HEALTH_CHECK_INTERVAL_MS = 15_000L
+
+private const val PLAYBACK_HEALTH_STALE_THRESHOLD_MS = 75_000L
+
+/** Limits recover storms when polling repeatedly trips stale detection. */
+private const val PLAYBACK_FREEZE_RECOVER_COOLDOWN_MS = 45_000L
+
 private const val ANONYMOUS_SIGN_IN_MAX_ATTEMPTS = 8
 private const val SUPABASE_NETWORK_RETRY_MAX = 4
 
@@ -205,6 +221,7 @@ class MainViewModel(
 ) : AndroidViewModel(application) {
     private val dataStore = application.deviceDataStore
     private var playbackObserveJob: Job? = null
+    private var playbackHealthMonitorJob: Job? = null
     private var telemetryJob: Job? = null
     private var telemetryDeviceId: String? = null
     private val lastContentRevision = AtomicReference<String?>(null)
@@ -221,6 +238,24 @@ class MainViewModel(
     val playbackUiRecoveryEpoch: StateFlow<Long> = _playbackUiRecoveryEpoch.asStateFlow()
 
     private var lastPlaybackForegroundRecoveryAtElapsedMs = 0L
+
+    private val lastPlaybackProgressSignalElapsedMs = AtomicLong(SystemClock.elapsedRealtime())
+
+    private var lastFreezeAutoRecoverAtElapsedMs = 0L
+
+    private val isPlaybackProcessForeground = AtomicBoolean(false)
+
+    private val playbackProcessLifecycleObserver =
+        object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) {
+                isPlaybackProcessForeground.set(true)
+                signalPlaybackHealthy()
+            }
+
+            override fun onStop(owner: LifecycleOwner) {
+                isPlaybackProcessForeground.set(false)
+            }
+        }
 
     private val supabase by lazy {
         createSupabaseClient(
@@ -242,10 +277,49 @@ class MainViewModel(
             Log.e(LOG_TAG, "TvUserFacingError ${TvUserFacingError.CONFIG_INCOMPLETE}: SUPABASE_URL or SUPABASE_ANON_KEY is blank in build")
             _state.value = MainUiState.MissingConfig
         } else {
+            ProcessLifecycleOwner.get().lifecycle.addObserver(playbackProcessLifecycleObserver)
             viewModelScope.launch {
                 runStartupUntilConnected()
             }
         }
+    }
+
+    /** Slide advanced, video time advanced, image dwell tick, etc. — resets stale watchdog. */
+    fun signalPlaybackHealthy() {
+        lastPlaybackProgressSignalElapsedMs.set(SystemClock.elapsedRealtime())
+    }
+
+    /**
+     * Same net effect as editing the playlist on the web: refetch soon, remount UI, reset decoder.
+     * Used for foreground wake, detected freezes, and Exo hard stall.
+     */
+    internal fun recoverPlaybackAsIfPlaylistChanged(
+        reason: String,
+        force: Boolean = false,
+    ) {
+        val s = _state.value
+        if (s !is MainUiState.Playback || s.playbackDisabledByAdmin || s.slides.isEmpty()) {
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (!force && now - lastFreezeAutoRecoverAtElapsedMs < PLAYBACK_FREEZE_RECOVER_COOLDOWN_MS) {
+            Log.d(LOG_TAG, "recoverPlaybackAsIfPlaylistChanged skipped ($reason); cooldown active")
+            return
+        }
+        lastFreezeAutoRecoverAtElapsedMs = now
+        Log.w(LOG_TAG, "recover playback as if playlist changed ($reason)")
+        signageExo?.resetDecoderStateAfterDisplayWake()
+        val deviceId = s.deviceId
+        _state.update { cur ->
+            if (cur is MainUiState.Playback && cur.deviceId == deviceId && !cur.playbackDisabledByAdmin && cur.slides.isNotEmpty()) {
+                cur.copy(uiRefreshGeneration = cur.uiRefreshGeneration + 1)
+            } else {
+                cur
+            }
+        }
+        requestPlaybackUiRecovery(reason)
+        immediatePlaybackPoll.trySend(Unit)
+        signalPlaybackHealthy()
     }
 
     private fun ensureSignageExo() {
@@ -253,7 +327,10 @@ class MainViewModel(
             signageExo =
                 SignageExoController(getApplication()).also { controller ->
                     controller.onHardPlaybackRecovery = {
-                        requestPlaybackUiRecovery(reason = "exo_stall")
+                        recoverPlaybackAsIfPlaylistChanged(reason = "exo_hard_stall", force = true)
+                    }
+                    controller.onPlaybackPositionAdvanced = {
+                        signalPlaybackHealthy()
                     }
                 }
         }
@@ -287,18 +364,7 @@ class MainViewModel(
             now - lastPlaybackForegroundRecoveryAtElapsedMs >= FOREGROUND_RECOVERY_DEBOUNCE_MS
         ) {
             lastPlaybackForegroundRecoveryAtElapsedMs = now
-            Log.i(LOG_TAG, "playback foreground: resync from server + decoder reset")
-            signageExo?.resetDecoderStateAfterDisplayWake()
-            val deviceId = s.deviceId
-            _state.update { cur ->
-                if (cur is MainUiState.Playback && cur.deviceId == deviceId && !cur.playbackDisabledByAdmin && cur.slides.isNotEmpty()) {
-                    cur.copy(uiRefreshGeneration = cur.uiRefreshGeneration + 1)
-                } else {
-                    cur
-                }
-            }
-            requestPlaybackUiRecovery(reason = "foreground")
-            immediatePlaybackPoll.trySend(Unit)
+            recoverPlaybackAsIfPlaylistChanged(reason = "foreground", force = true)
         }
         signageExo?.onActivityResume()
     }
@@ -695,8 +761,30 @@ class MainViewModel(
         deviceName: String,
     ) {
         playbackObserveJob?.cancel()
+        playbackHealthMonitorJob?.cancel()
         startDeviceTelemetryLoop(deviceId)
         ensureSignageExo()
+        signalPlaybackHealthy()
+        playbackHealthMonitorJob =
+            viewModelScope.launch {
+                while (isActive) {
+                    delay(PLAYBACK_HEALTH_CHECK_INTERVAL_MS)
+                    if (!isPlaybackProcessForeground.get()) {
+                        continue
+                    }
+                    val cur = _state.value
+                    if (cur !is MainUiState.Playback || cur.playbackDisabledByAdmin || cur.slides.isEmpty()) {
+                        continue
+                    }
+                    val now = SystemClock.elapsedRealtime()
+                    val staleMs = now - lastPlaybackProgressSignalElapsedMs.get()
+                    if (staleMs < PLAYBACK_HEALTH_STALE_THRESHOLD_MS) {
+                        continue
+                    }
+                    Log.w(LOG_TAG, "playback progress stale (${staleMs}ms) — treating like playlist update")
+                    recoverPlaybackAsIfPlaylistChanged(reason = "playback_progress_stale", force = false)
+                }
+            }
         playbackObserveJob =
             viewModelScope.launch {
                 val cached = readCachedPlaybackOnly(deviceId)
@@ -919,6 +1007,8 @@ class MainViewModel(
         telemetryJob = null
         playbackObserveJob?.cancel()
         playbackObserveJob = null
+        playbackHealthMonitorJob?.cancel()
+        playbackHealthMonitorJob = null
         telemetryDeviceId = null
         signageExo?.release()
         signageExo = null
@@ -944,8 +1034,10 @@ class MainViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(playbackProcessLifecycleObserver)
         telemetryJob?.cancel()
         playbackObserveJob?.cancel()
+        playbackHealthMonitorJob?.cancel()
         signageExo?.release()
         signageExo = null
     }

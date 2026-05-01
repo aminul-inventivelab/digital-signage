@@ -12,6 +12,9 @@ import android.view.Display
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +43,17 @@ class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
 
     /**
+     * Emulator “TV power” often leaves the activity resumed while only window focus toggles.
+     * Process lifecycle catches coming back from real background.
+     */
+    private val processForegroundObserver =
+        object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) {
+                viewModel.onPlaybackForegroundEvent()
+            }
+        }
+
+    /**
      * TVs often fail to deliver [Intent.ACTION_SCREEN_ON] while still updating [DisplayManager].
      * This catches HDMI/display power so we resync playback after standby.
      */
@@ -61,6 +75,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ProcessLifecycleOwner.get().lifecycle.addObserver(processForegroundObserver)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
             SignageTvTheme {
@@ -112,6 +127,18 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onDestroy() {
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(processForegroundObserver)
+        super.onDestroy()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            viewModel.onPlaybackForegroundEvent()
         }
     }
 

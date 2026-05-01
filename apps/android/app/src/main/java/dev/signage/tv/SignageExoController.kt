@@ -110,6 +110,9 @@ class SignageExoController(
                 if (stallWatchdogLastPositionMs >= 0 && delta < STALL_POSITION_DELTA_EPSILON_MS) {
                     stallWatchdogSameTicks++
                 } else {
+                    if (stallWatchdogLastPositionMs >= 0 && delta >= STALL_POSITION_DELTA_EPSILON_MS) {
+                        mainHandler.post { onPlaybackPositionAdvanced?.invoke() }
+                    }
                     stallWatchdogSameTicks = 0
                     stallSoftRecoveriesInWindow = 0
                 }
@@ -128,6 +131,9 @@ class SignageExoController(
 
     /** Invoked after repeated soft stall recoveries so Compose can remount [PlayerView]. */
     var onHardPlaybackRecovery: (() -> Unit)? = null
+
+    /** Invoked on the main thread when playback time advances (stall watchdog tick). */
+    var onPlaybackPositionAdvanced: (() -> Unit)? = null
 
     private val upstream: OkHttpDataSource.Factory = OkHttpDataSource.Factory(UnsafeOkHttpClient.instance)
     val cacheDataSourceFactory: CacheDataSource.Factory =
@@ -281,6 +287,21 @@ class SignageExoController(
         }
 
         startStallWatchdog()
+    }
+
+    /**
+     * Called when the output [android.graphics.SurfaceTexture] was destroyed and recreated (typical after
+     * display/TV power cycles). Re-prepares the current item without requiring Compose to rebuild.
+     */
+    fun rebindCurrentBoundVideo(reason: String) {
+        val snapshot = boundVideo ?: return
+        Log.i(log, "Rebinding bound video ($reason) url=${snapshot.url}")
+        bindCurrentVideoUrl(
+            snapshot.url,
+            snapshot.maxDurationSeconds,
+            snapshot.onEnded,
+            snapshot.onFirstFrameRendered,
+        )
     }
 
     fun onActivityPause() {

@@ -2,8 +2,11 @@ package dev.signage.tv
 
 import android.content.pm.ActivityInfo
 import android.graphics.Color
+import android.graphics.SurfaceTexture
 import android.util.Log
 import android.view.LayoutInflater
+import android.view.TextureView
+import android.view.ViewTreeObserver
 import androidx.activity.ComponentActivity
 import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.Box
@@ -46,6 +49,97 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
 private const val LOG_TAG = "SignageTV"
+
+private object SignageTextureSurfaceHookApplied
+
+private object SignageSurfaceHookPending
+
+/**
+ * When the TV/emulator recovers from standby, the TextureView surface can be recreated while Exo still
+ * holds a dead output surface. We wrap Media3's listener so we can [SignageExoController.rebindCurrentBoundVideo]
+ * after a real destroy → create cycle (without replacing Exo's listener entirely).
+ */
+private fun hookTextureSurfaceRecycleIfNeeded(
+    playerView: PlayerView,
+    engine: SignageExoController,
+) {
+    if (playerView.videoSurfaceView !is TextureView) {
+        return
+    }
+    val textureView = playerView.videoSurfaceView as TextureView
+    if (textureView.tag === SignageTextureSurfaceHookApplied) {
+        return
+    }
+    if (playerView.tag === SignageSurfaceHookPending) {
+        return
+    }
+    playerView.tag = SignageSurfaceHookPending
+    val vto = playerView.viewTreeObserver
+    if (!vto.isAlive) {
+        playerView.tag = null
+        return
+    }
+    vto.addOnGlobalLayoutListener(
+        object : ViewTreeObserver.OnGlobalLayoutListener {
+            private var layoutPasses = 0
+
+            override fun onGlobalLayout() {
+                layoutPasses++
+                val obs = playerView.viewTreeObserver
+                val innerTv = playerView.videoSurfaceView as? TextureView
+                if (innerTv != null && innerTv.tag !== SignageTextureSurfaceHookApplied) {
+                    val delegate = innerTv.surfaceTextureListener
+                    if (delegate != null) {
+                        if (obs.isAlive) {
+                            obs.removeOnGlobalLayoutListener(this)
+                        }
+                        playerView.tag = null
+                        innerTv.tag = SignageTextureSurfaceHookApplied
+                        var surfaceWasDestroyed = false
+                        innerTv.surfaceTextureListener =
+                            object : TextureView.SurfaceTextureListener {
+                                override fun onSurfaceTextureAvailable(
+                                    surface: SurfaceTexture,
+                                    width: Int,
+                                    height: Int,
+                                ) {
+                                    delegate.onSurfaceTextureAvailable(surface, width, height)
+                                    if (surfaceWasDestroyed) {
+                                        surfaceWasDestroyed = false
+                                        engine.rebindCurrentBoundVideo("texture_surface_recycled")
+                                    }
+                                }
+
+                                override fun onSurfaceTextureSizeChanged(
+                                    surface: SurfaceTexture,
+                                    width: Int,
+                                    height: Int,
+                                ) {
+                                    delegate.onSurfaceTextureSizeChanged(surface, width, height)
+                                }
+
+                                override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+                                    surfaceWasDestroyed = true
+                                    return delegate.onSurfaceTextureDestroyed(surface)
+                                }
+
+                                override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
+                                    delegate.onSurfaceTextureUpdated(surface)
+                                }
+                            }
+                        return
+                    }
+                }
+                if (layoutPasses >= 12 && obs.isAlive) {
+                    obs.removeOnGlobalLayoutListener(this)
+                    if (playerView.tag === SignageSurfaceHookPending) {
+                        playerView.tag = null
+                    }
+                }
+            }
+        },
+    )
+}
 
 @Composable
 private fun AdminDisabledStandbyScreen() {
@@ -109,6 +203,10 @@ fun PlaybackScreen(
         viewModel.onPlaybackSlideContext(index, state.slides)
     }
 
+    LaunchedEffect(slide.fileType, index, visit, slide.url) {
+        viewModel.signalPlaybackHealthy()
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         when (slide.fileType) {
             "video" -> {
@@ -135,6 +233,7 @@ fun PlaybackScreen(
                     durationSeconds = slide.durationSeconds,
                     recoveryEpoch = recoveryEpoch,
                     uiRefreshGeneration = state.uiRefreshGeneration,
+                    viewModel = viewModel,
                     onDone = {
                         index = (index + 1) % n
                         visit += 1
@@ -182,6 +281,7 @@ private fun SharedExoVideoSlide(
                 if (view.player == null) {
                     view.player = engine.exo
                 }
+                hookTextureSurfaceRecycleIfNeeded(view, engine)
                 view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                 if (lastBound != bindKey) {
                     lastBound = bindKey
@@ -249,6 +349,7 @@ private fun ImageSlide(
     durationSeconds: Int?,
     recoveryEpoch: Long,
     uiRefreshGeneration: Long,
+    viewModel: MainViewModel,
     onDone: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -279,9 +380,23 @@ private fun ImageSlide(
                     }
                 }
             when (settled) {
-                is AsyncImagePainter.State.Success -> delay(dwellMs)
-                is AsyncImagePainter.State.Error -> delay(8_000)
-                else -> Unit
+                is AsyncImagePainter.State.Success -> {
+                    var remaining = dwellMs
+                    while (remaining > 0) {
+                        val chunk = remaining.coerceAtMost(25_000L)
+                        delay(chunk)
+                        remaining -= chunk
+                        viewModel.signalPlaybackHealthy()
+                    }
+                }
+                is AsyncImagePainter.State.Error -> {
+                    viewModel.signalPlaybackHealthy()
+                    delay(8_000)
+                }
+                else -> {
+                    viewModel.recoverPlaybackAsIfPlaylistChanged(reason = "image_load_stuck", force = true)
+                    return@LaunchedEffect
+                }
             }
             onDone()
         }
