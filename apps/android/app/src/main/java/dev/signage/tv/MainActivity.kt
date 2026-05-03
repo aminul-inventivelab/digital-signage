@@ -59,6 +59,8 @@ class MainActivity : ComponentActivity() {
      */
     private var displayPowerListener: DisplayManager.DisplayListener? = null
 
+    private var networkPlaybackObserver: PlaybackNetworkObserver? = null
+
     private val screenPowerReceiver =
         object : BroadcastReceiver() {
             override fun onReceive(
@@ -173,9 +175,16 @@ class MainActivity : ComponentActivity() {
             }
         displayPowerListener = listener
         dm.registerDisplayListener(listener, Handler(Looper.getMainLooper()))
+
+        networkPlaybackObserver =
+            PlaybackNetworkObserver(this) {
+                viewModel.requestImmediatePlaybackSync()
+            }.also { it.register() }
     }
 
     override fun onStop() {
+        networkPlaybackObserver?.unregister()
+        networkPlaybackObserver = null
         displayPowerListener?.let { listener ->
             getSystemService(DisplayManager::class.java).unregisterDisplayListener(listener)
             displayPowerListener = null

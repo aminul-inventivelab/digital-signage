@@ -22,6 +22,7 @@ import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.jan.supabase.postgrest.rpc
+import io.github.jan.supabase.realtime.Realtime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -185,7 +186,27 @@ private data class TvMergePlaybackSnapshotParams(
     val pPlayback: JsonObject,
 )
 
+@Serializable
+private data class TvGetPlaybackRevisionResult(
+    val ok: Boolean,
+    @SerialName("deviceName") val deviceName: String? = null,
+    @SerialName("playbackDisabled") val playbackDisabled: Boolean = false,
+    @SerialName("contentRevision") val contentRevision: String? = null,
+    @SerialName("playlistId") val playlistId: String? = null,
+    @SerialName("playlistName") val playlistName: String? = null,
+    @SerialName("screenOrientation") val screenOrientation: String? = null,
+)
+
 private const val TELEMETRY_INTERVAL_MS = 120_000L
+
+/**
+ * Cadence between [tv_get_playback_revision] polls (cheap fingerprint only).
+ * Full [tv_get_playback_slides] runs only when revision no longer matches UI state.
+ */
+private const val POLL_INTERVAL_MS = 4_000L
+
+/** [tv_device_heartbeat] keeps dashboard online status without tying it to manifest polls. */
+private const val HEARTBEAT_INTERVAL_MS = 60_000L
 
 /** Avoid double UI recovery when both activity resume and [android.content.Intent.ACTION_SCREEN_ON] fire. */
 private const val FOREGROUND_RECOVERY_DEBOUNCE_MS = 750L
@@ -226,6 +247,9 @@ class MainViewModel(
     private var telemetryDeviceId: String? = null
     private val lastContentRevision = AtomicReference<String?>(null)
     private var signageExo: SignageExoController? = null
+    private var playbackRealtime: PlaybackRealtimeCoordinator? = null
+    private val playbackSyncHintsPollFast = AtomicBoolean(false)
+    private val manifestNeedsQuickFollowUp = AtomicBoolean(true)
 
     /** Wakes the playback poll loop immediately (conflated). */
     private val immediatePlaybackPoll = Channel<Unit>(Channel.CONFLATED)
@@ -265,6 +289,7 @@ class MainViewModel(
             httpEngine = KtorClientProvider.unsafeHttpClient.engine
             install(Auth)
             install(Postgrest)
+            install(Realtime)
             // HttpTimeout is already installed in KtorClientProvider.unsafeHttpClient
         }
     }
@@ -287,6 +312,67 @@ class MainViewModel(
     /** Slide advanced, video time advanced, image dwell tick, etc. — resets stale watchdog. */
     fun signalPlaybackHealthy() {
         lastPlaybackProgressSignalElapsedMs.set(SystemClock.elapsedRealtime())
+    }
+
+    /** Network came back or external wake — treat like a fast manifest poll cycle. */
+    fun requestImmediatePlaybackSync() {
+        playbackSyncHintsPollFast.set(true)
+        manifestNeedsQuickFollowUp.set(true)
+        immediatePlaybackPoll.trySend(Unit)
+    }
+
+    private fun normalizeScreenOrientation(value: String?): String =
+        value?.trim()?.lowercase()?.takeIf { it == "portrait" || it == "landscape" } ?: "landscape"
+
+    private fun revisionMatchesPlayback(
+        rev: TvGetPlaybackRevisionResult,
+        cur: MainUiState.Playback,
+        deviceId: String,
+    ): Boolean {
+        if (cur.deviceId != deviceId) return false
+        if (rev.playbackDisabled != cur.playbackDisabledByAdmin) return false
+        if (rev.contentRevision != cur.contentRevision) return false
+        if (rev.playlistId != cur.playlistId) return false
+        if ((rev.deviceName ?: "") != cur.deviceName) return false
+        if ((rev.playlistName ?: "") != (cur.playlistName ?: "")) return false
+        if (normalizeScreenOrientation(rev.screenOrientation) != normalizeScreenOrientation(cur.screenOrientation)) {
+            return false
+        }
+        return true
+    }
+
+    private suspend fun fetchPlaybackRevision(deviceId: String): TvGetPlaybackRevisionResult {
+        val storedPlaybackSecret = dataStore.data.first()[DeviceKeys.PLAYBACK_SECRET]
+        return retrySupabaseNetwork("tv_get_playback_revision") {
+            supabase.postgrest.rpc(
+                "tv_get_playback_revision",
+                TvGetPlaybackParams(
+                    pDeviceId = deviceId,
+                    pPlaybackSecret = storedPlaybackSecret?.takeIf { it.isNotBlank() },
+                ),
+            ).decodeAs<TvGetPlaybackRevisionResult>()
+        }
+    }
+
+    private fun computePlaybackPollTimeoutMs(): Long {
+        manifestNeedsQuickFollowUp.compareAndSet(true, false)
+        playbackSyncHintsPollFast.compareAndSet(true, false)
+        return POLL_INTERVAL_MS
+    }
+
+    private suspend fun sendDeviceHeartbeat(deviceId: String) {
+        val storedPlaybackSecret = dataStore.data.first()[DeviceKeys.PLAYBACK_SECRET]
+        runCatching {
+            supabase.postgrest.rpc(
+                "tv_device_heartbeat",
+                TvGetPlaybackParams(
+                    pDeviceId = deviceId,
+                    pPlaybackSecret = storedPlaybackSecret?.takeIf { it.isNotBlank() },
+                ),
+            )
+        }.onFailure { e ->
+            Log.d(LOG_TAG, "tv_device_heartbeat failed", e)
+        }
     }
 
     /**
@@ -762,6 +848,7 @@ class MainViewModel(
     ) {
         playbackObserveJob?.cancel()
         playbackHealthMonitorJob?.cancel()
+        playbackRealtime?.disconnect()
         startDeviceTelemetryLoop(deviceId)
         ensureSignageExo()
         signalPlaybackHealthy()
@@ -787,65 +874,113 @@ class MainViewModel(
             }
         playbackObserveJob =
             viewModelScope.launch {
-                val cached = readCachedPlaybackOnly(deviceId)
-                var nameForPoll =
-                    when {
-                        deviceName.isNotBlank() -> deviceName
-                        cached != null -> cached.deviceName
-                        else -> ""
+                val heartbeatLoop =
+                    launch {
+                        sendDeviceHeartbeat(deviceId)
+                        while (isActive) {
+                            delay(HEARTBEAT_INTERVAL_MS)
+                            sendDeviceHeartbeat(deviceId)
+                        }
                     }
-                if (cached != null) {
-                    _state.value =
-                        cached.copy(
-                            deviceName = nameForPoll.ifBlank { cached.deviceName },
-                            isFromCache = true,
-                        )
-                }
-                while (isActive) {
-                    try {
-                        when (val loaded = loadPlaybackState(nameForPoll, deviceId)) {
-                            is PlaybackLoadResult.NeedsRePairing -> {
+                try {
+                    manifestNeedsQuickFollowUp.set(true)
+                    playbackRealtime = PlaybackRealtimeCoordinator(supabase, viewModelScope)
+                    val onStale: () -> Unit = {
+                        playbackSyncHintsPollFast.set(true)
+                        manifestNeedsQuickFollowUp.set(true)
+                        immediatePlaybackPoll.trySend(Unit)
+                    }
+                    val cached = readCachedPlaybackOnly(deviceId)
+                    var nameForPoll =
+                        when {
+                            deviceName.isNotBlank() -> deviceName
+                            cached != null -> cached.deviceName
+                            else -> ""
+                        }
+                    if (cached != null) {
+                        _state.value =
+                            cached.copy(
+                                deviceName = nameForPoll.ifBlank { cached.deviceName },
+                                isFromCache = true,
+                            )
+                    }
+                    playbackRealtime?.update(deviceId, cached?.playlistId, onStale)
+                    while (isActive) {
+                        try {
+                            val rev = fetchPlaybackRevision(deviceId)
+                            Log.d(
+                                LOG_TAG,
+                                "tv_get_playback_revision ok=${rev.ok} disabled=${rev.playbackDisabled} playlist=${rev.playlistName} rev=${rev.contentRevision}",
+                            )
+                            if (!rev.ok) {
                                 viewModelScope.launch {
                                     recoverPairingAfterPlaybackRejected()
                                 }
                                 return@launch
                             }
-                            is PlaybackLoadResult.Ok -> {
-                                val next = loaded.state
-                                nameForPoll = next.deviceName
-                                _state.value = next
+                            lastContentRevision.set(rev.contentRevision)
+                            val cur = _state.value as? MainUiState.Playback
+                            val canSkipFullFetch =
+                                cur != null &&
+                                    revisionMatchesPlayback(rev, cur, deviceId) &&
+                                    when {
+                                        rev.playbackDisabled -> true
+                                        cur.slides.isNotEmpty() -> true
+                                        rev.playlistId == null && cur.slides.isEmpty() -> true
+                                        else -> false
+                                    }
+                            if (canSkipFullFetch) {
+                                nameForPoll = rev.deviceName?.takeIf { it.isNotBlank() } ?: nameForPoll
+                            } else {
+                                manifestNeedsQuickFollowUp.set(true)
+                                when (val loaded = loadPlaybackState(nameForPoll, deviceId)) {
+                                    is PlaybackLoadResult.NeedsRePairing -> {
+                                        viewModelScope.launch {
+                                            recoverPairingAfterPlaybackRejected()
+                                        }
+                                        return@launch
+                                    }
+                                    is PlaybackLoadResult.Ok -> {
+                                        val next = loaded.state
+                                        nameForPoll = next.deviceName
+                                        _state.value = next
+                                        playbackRealtime?.update(deviceId, next.playlistId, onStale)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(LOG_TAG, "playback manifest sync failed", e)
+                            val now = _state.value
+                            if (now is MainUiState.Playback &&
+                                now.deviceId == deviceId &&
+                                (now.slides.isNotEmpty() || now.playbackDisabledByAdmin)
+                            ) {
+                                // Keep last good manifest or admin standby until the next poll succeeds.
+                            } else if (cached != null) {
+                                _state.value =
+                                    cached.copy(
+                                        deviceName = nameForPoll.ifBlank { cached.deviceName },
+                                        isFromCache = true,
+                                    )
+                            } else {
+                                _state.value =
+                                    MainUiState.Playback(
+                                        deviceName = nameForPoll,
+                                        deviceId = deviceId,
+                                        playlistName = null,
+                                        slides = emptyList(),
+                                        screenOrientation = (now as? MainUiState.Playback)?.screenOrientation ?: "landscape",
+                                        playbackDisabledByAdmin = false,
+                                    )
                             }
                         }
-                    } catch (e: Exception) {
-                        Log.e(LOG_TAG, "loadPlaybackState failed", e)
-                        val now = _state.value
-                        if (now is MainUiState.Playback &&
-                            now.deviceId == deviceId &&
-                            (now.slides.isNotEmpty() || now.playbackDisabledByAdmin)
-                        ) {
-                            // Keep last good manifest or admin standby until the next poll succeeds.
-                        } else if (cached != null) {
-                            _state.value =
-                                cached.copy(
-                                    deviceName = nameForPoll.ifBlank { cached.deviceName },
-                                    isFromCache = true,
-                                )
-                        } else {
-                            _state.value =
-                                MainUiState.Playback(
-                                    deviceName = nameForPoll,
-                                    deviceId = deviceId,
-                                    playlistName = null,
-                                    slides = emptyList(),
-                                    screenOrientation = (now as? MainUiState.Playback)?.screenOrientation ?: "landscape",
-                                    playbackDisabledByAdmin = false,
-                                )
+                        select {
+                            immediatePlaybackPoll.onReceive { }
+                            onTimeout(computePlaybackPollTimeoutMs()) { }
                         }
                     }
-                    select {
-                        immediatePlaybackPoll.onReceive { }
-                        onTimeout(4_000) { }
-                    }
+                } finally {
+                    heartbeatLoop.cancel()
                 }
             }
     }
@@ -1010,6 +1145,8 @@ class MainViewModel(
         playbackHealthMonitorJob?.cancel()
         playbackHealthMonitorJob = null
         telemetryDeviceId = null
+        playbackRealtime?.disconnect()
+        playbackRealtime = null
         signageExo?.release()
         signageExo = null
         viewModelScope.launch {
@@ -1038,6 +1175,8 @@ class MainViewModel(
         telemetryJob?.cancel()
         playbackObserveJob?.cancel()
         playbackHealthMonitorJob?.cancel()
+        playbackRealtime?.disconnect()
+        playbackRealtime = null
         signageExo?.release()
         signageExo = null
     }

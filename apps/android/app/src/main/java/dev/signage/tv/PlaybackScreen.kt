@@ -211,7 +211,8 @@ fun PlaybackScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         when (slide.fileType) {
             "video" -> {
-                key(visit, slide.url, recoveryEpoch, state.uiRefreshGeneration) {
+                // Include contentRevision so a playlist edit that keeps the same URL still remounts/rebinds Exo.
+                key(visit, slide.url, recoveryEpoch, state.uiRefreshGeneration, state.contentRevision) {
                     val onEnded: () -> Unit = {
                         index = (index + 1) % n
                         visit += 1
@@ -226,7 +227,7 @@ fun PlaybackScreen(
                 }
             }
             else -> {
-                DisposableEffect(index, slide.url) {
+                DisposableEffect(index, slide.url, state.contentRevision) {
                     engine.onPlayerViewDetached()
                     onDispose { }
                 }
@@ -235,6 +236,7 @@ fun PlaybackScreen(
                     durationSeconds = slide.durationSeconds,
                     recoveryEpoch = recoveryEpoch,
                     uiRefreshGeneration = state.uiRefreshGeneration,
+                    contentRevision = state.contentRevision,
                     viewModel = viewModel,
                     onDone = {
                         index = (index + 1) % n
@@ -357,13 +359,14 @@ private fun ImageSlide(
     durationSeconds: Int?,
     recoveryEpoch: Long,
     uiRefreshGeneration: Long,
+    contentRevision: String?,
     viewModel: MainViewModel,
     onDone: () -> Unit,
 ) {
     val context = LocalContext.current
     val dwellMs = (durationSeconds ?: 8).coerceIn(2, 120) * 1000L
     val request =
-        remember(url) {
+        remember(url, contentRevision) {
             ImageRequest.Builder(context)
                 .data(url)
                 .listener(
@@ -380,7 +383,7 @@ private fun ImageSlide(
         modifier = Modifier.fillMaxSize(),
         contentScale = ContentScale.Crop,
     ) {
-        LaunchedEffect(url, dwellMs, recoveryEpoch, uiRefreshGeneration) {
+        LaunchedEffect(url, dwellMs, recoveryEpoch, uiRefreshGeneration, contentRevision) {
             val settled =
                 withTimeoutOrNull(120_000) {
                     snapshotFlow { painter.state }.first {
