@@ -6,7 +6,8 @@
     "dev": "pnpm --filter @signage/web dev",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @signage/web test"
   },
   "engines": {
     "node": ">=20"

@@ -20,7 +20,6 @@ import io.github.jan.supabase.gotrue.auth
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.jan.supabase.postgrest.rpc
 import io.github.jan.supabase.realtime.Realtime
 import kotlinx.coroutines.CancellationException
@@ -46,7 +45,6 @@ import kotlinx.serialization.json.JsonObject
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.random.Random
 
 private const val LOG_TAG = "SignageTV"
 
@@ -55,15 +53,6 @@ private val Application.deviceDataStore by preferencesDataStore(name = "signage_
 private val cachedPlaybackJson = Json {
     ignoreUnknownKeys = true
     encodeDefaults = true
-}
-
-/**
- * PostgREST returns `[{...}]` by default, but `single()` uses `Accept: application/vnd.pgrst.object+json`,
- * which returns `{...}`. supabase-kt's [PostgrestResult.decodeSingle] only accepts a JSON array.
- */
-private inline fun <reified T : Any> PostgrestResult.decodeOneRow(): T {
-    val payload = data.trim()
-    return if (payload.startsWith("[")) decodeSingle<T>() else decodeAs<T>()
 }
 
 private object DeviceKeys {
@@ -79,63 +68,6 @@ private object DeviceKeys {
      */
     val REGISTERED_SESSION_ID = stringPreferencesKey("registered_session_id")
 }
-
-sealed interface MainUiState {
-    /** Initial connect / registration in progress. */
-    data object Initializing : MainUiState
-
-    data object MissingConfig : MainUiState
-
-    data class AwaitingLink(
-        val pairingCode: String,
-        val deviceId: String,
-        val message: String,
-    ) : MainUiState
-
-    data class Playback(
-        val deviceName: String,
-        val deviceId: String,
-        val playlistName: String?,
-        val slides: List<PlaybackSlide>,
-        /** In-memory; last successful RPC (or cache on cold start) had network payload. */
-        val isFromCache: Boolean = false,
-        val contentRevision: String? = null,
-        val playlistId: String? = null,
-        /** Mirrors [DeviceRow.screenOrientation] from poll (dashboard setting). */
-        val screenOrientation: String = "landscape",
-        /** Admin paused playback in the dashboard; show standby branding instead of slides or errors. */
-        val playbackDisabledByAdmin: Boolean = false,
-        /**
-         * Bumped when the display returns after standby so [MutableStateFlow] emits even if the server
-         * manifest is unchanged, and so the UI restarts the playlist like a fresh sync.
-         */
-        val uiRefreshGeneration: Long = 0L,
-    ) : MainUiState
-
-    /**
-     * Fatal to the main flow. [code] is a [TvUserFacingError] constant for support;
-     * details are in logcat, not in [code].
-     */
-    data class Error(val code: String) : MainUiState
-}
-
-@Serializable
-data class DeviceInsert(
-    @SerialName("pairing_code") val pairingCode: String,
-    val name: String = "Android TV",
-    val status: String = "pending_pairing",
-    @SerialName("registered_session_id") val registeredSessionId: String,
-)
-
-@Serializable
-data class DeviceRow(
-    val id: String,
-    @SerialName("owner_id") val ownerId: String? = null,
-    @SerialName("pairing_code") val pairingCode: String,
-    val name: String,
-    val status: String,
-    @SerialName("screen_orientation") val screenOrientation: String = "landscape",
-)
 
 @Serializable
 private data class TvGetPlaybackParams(
@@ -1180,6 +1112,4 @@ class MainViewModel(
         signageExo?.release()
         signageExo = null
     }
-
-    private fun generatePairingCode(): String = Random.nextInt(0, 1_000_000).toString().padStart(6, '0')
 }

@@ -42,6 +42,8 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
         val (supabaseUrl, supabaseAnonKey) = sanitizedSupabaseFromLocal(localProperties)
 
         buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
@@ -50,7 +52,7 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -121,4 +123,10 @@ dependencies {
     implementation("org.slf4j:slf4j-android:1.7.36")
 
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    testImplementation("junit:junit:4.13.2")
+
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test:runner:1.6.1")
 }

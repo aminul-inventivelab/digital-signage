@@ -1,6 +1,8 @@
 # Android TV Player
 
-Kotlin + Jetpack Compose TV primitives, **Media3 ExoPlayer**, **Supabase** (anonymous auth + PostgREST), and **DataStore** for device state.
+Kotlin + Jetpack Compose TV primitives, **Media3 ExoPlayer** (disk cache + stall recovery), **Supabase** (anonymous auth, PostgREST, **Realtime** on `device_playlists` / `playlist_items`), and **DataStore** for device state.
+
+HTTPS uses the **platform TLS stack** (system trust store) for Supabase, Coil, and ExoPlayer. If images or video fail while the API still works, check **system date/time**, OS updates for root CAs, and captive portals / TLS-inspecting networks.
 
 ## Configure
 
@@ -12,14 +14,29 @@ Kotlin + Jetpack Compose TV primitives, **Media3 ExoPlayer**, **Supabase** (anon
 
 Open this folder in Android Studio and run on an Android TV / emulator with a landscape display.
 
+## Tests
+
+- **Unit:** `./gradlew :app:testDebugUnitTest`
+- **Instrumented (device/emulator):** `./gradlew :app:connectedDebugAndroidTest`
+
+## Release builds
+
+`release` has **R8 minification** enabled. After dependency upgrades, verify `./gradlew :app:assembleRelease` and smoke-test pairing + image + video on a real device.
+
 ## MVP behavior
 
 - On first launch the app signs in **anonymously**, generates a **six-digit pairing code**, inserts a `devices` row (`registered_session_id` = anonymous user id), and shows the code full-screen.
-- It polls the `devices` row until an admin links it from the web dashboard (`owner_id` set via `link_device_by_pairing_code`).
+- It polls the `devices` row until an admin links it from the web dashboard (`owner_id` set via `link_device_by_pairing_code`). **Realtime** nudges manifest refresh when assignments or playlist items change.
+- Cached playback JSON allows a cold start with the last known slides when the network is down (best-effort).
 - Use **Reset registration** during development to clear local pairing state.
 
-## Next steps (not fully wired in this scaffold)
+## Pre-release QA (manual)
 
-- **Room** cache for playlists/media metadata (dependencies removed temporarily to keep Gradle lean—add `room-runtime`, `ksp`, and entities when you flesh out offline mode).
-- **Realtime** channel on `device_playlists` / `playlist_items` instead of polling.
-- **ExoPlayer** loop for signed storage URLs returned from PostgREST joins.
+1. Pair a TV with the web dashboard; confirm **playback** (image + video) and **orientation** if you use it.
+2. Edit the assigned playlist on the web; confirm the TV picks up changes (Realtime + poll).
+3. Toggle **admin playback pause** if implemented; confirm standby vs slides.
+4. **Airplane mode** or unplug Ethernet briefly; confirm recovery and cache behavior match expectations.
+
+## Future work
+
+- **Room** (or similar) for structured offline playlist metadata if you outgrow JSON cache + Exo disk cache alone.
