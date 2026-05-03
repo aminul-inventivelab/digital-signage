@@ -79,6 +79,11 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    lint {
+        // AGP Lint crash with Kotlin 2.x (KaCallableMemberCall vs interface) in this detector; see lintVitalAnalyzeRelease.
+        disable += "NullSafeMutableLiveData"
+    }
 }
 
 dependencies {
