@@ -5,10 +5,10 @@ import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 
 object KtorClientProvider {
-    val unsafeHttpClient: HttpClient by lazy {
+    val httpClient: HttpClient by lazy {
         HttpClient(OkHttp) {
             engine {
-                preconfigured = UnsafeOkHttpClient.instance
+                preconfigured = SignageOkHttpClient.instance
             }
             install(HttpTimeout) {
                 requestTimeoutMillis = 60_000

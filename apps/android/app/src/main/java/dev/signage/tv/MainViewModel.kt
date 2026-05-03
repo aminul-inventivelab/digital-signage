@@ -286,11 +286,11 @@ class MainViewModel(
             supabaseUrl = BuildConfig.SUPABASE_URL,
             supabaseKey = BuildConfig.SUPABASE_ANON_KEY,
         ) {
-            httpEngine = KtorClientProvider.unsafeHttpClient.engine
+            httpEngine = KtorClientProvider.httpClient.engine
             install(Auth)
             install(Postgrest)
             install(Realtime)
-            // HttpTimeout is already installed in KtorClientProvider.unsafeHttpClient
+            // HttpTimeout is already installed in KtorClientProvider.httpClient
         }
     }
 

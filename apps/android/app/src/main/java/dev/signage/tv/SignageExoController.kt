@@ -135,7 +135,7 @@ class SignageExoController(
     /** Invoked on the main thread when playback time advances (stall watchdog tick). */
     var onPlaybackPositionAdvanced: (() -> Unit)? = null
 
-    private val upstream: OkHttpDataSource.Factory = OkHttpDataSource.Factory(UnsafeOkHttpClient.instance)
+    private val upstream: OkHttpDataSource.Factory = OkHttpDataSource.Factory(SignageOkHttpClient.instance)
     val cacheDataSourceFactory: CacheDataSource.Factory =
         CacheDataSource.Factory()
             .setCache(MediaCacheProvider.getSimpleCache(app))

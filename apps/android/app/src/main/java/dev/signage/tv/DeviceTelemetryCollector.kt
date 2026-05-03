@@ -173,7 +173,7 @@ object DeviceTelemetryCollector {
     private suspend fun fetchPublicIp(): String? =
         withContext(Dispatchers.IO) {
             runCatching {
-                KtorClientProvider.unsafeHttpClient.get(PUBLIC_IP_URL).bodyAsText().trim()
+                KtorClientProvider.httpClient.get(PUBLIC_IP_URL).bodyAsText().trim()
             }.getOrNull()
         }
 }

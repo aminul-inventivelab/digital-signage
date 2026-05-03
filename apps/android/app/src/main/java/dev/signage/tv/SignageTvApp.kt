@@ -20,7 +20,7 @@ class SignageTvApp : Application(), ImageLoaderFactory {
 
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
-            .okHttpClient(UnsafeOkHttpClient.instance)
+            .okHttpClient(SignageOkHttpClient.instance)
             .build()
     }
 }
