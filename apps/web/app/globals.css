@@ -10,7 +10,7 @@
    * App accent — change only --theme; all UI tints derive via transparency (transparent)
    * or strength (mix with #000 / #fff). Do not edit the derived lines when retinting.
    */
-  --theme: #059669;
+  --theme: #047857;
   /* Text/icons on solid --theme (mix toward white, not a second hand-picked hex) */
   --theme-contrast: color-mix(in srgb, var(--theme) 4%, #ffffff);
   --theme-hover: color-mix(in srgb, var(--theme) 85%, #000000);
