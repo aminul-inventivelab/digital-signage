@@ -8,8 +8,9 @@ export const assets = {
   loginBackgroundValue:
     "https://i.pinimg.com/736x/21/16/59/21165977ebcdc14db9ac23044c721820.jpg",
   layoutBackgroundValue: "#040D31",
-  themePrimary: "#040D31",
-  themePrimaryContrast: "#FFFFFF",
+  /** Must match `:root { --theme }` in app/globals.css (use CSS var so one hex drives the app). */
+  themePrimary: "var(--theme)",
+  themePrimaryContrast: "var(--theme-contrast)",
 } as const;
 
 export type AssetsConfig = typeof assets;

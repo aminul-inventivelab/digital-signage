@@ -109,7 +109,7 @@ export function PlaylistsWorkspace({ children }: { children: React.ReactNode }) 
               className={cn(
                 "flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
                 pathname === "/playlists"
-                  ? "bg-emerald-500/10 text-emerald-900 dark:text-emerald-100"
+                  ? "bg-brand-softer text-brand-heading dark:text-brand-onDarkSoft"
                   : "text-muted-foreground hover:bg-muted/80 hover:text-foreground",
               )}
             >
@@ -146,7 +146,7 @@ export function PlaylistsWorkspace({ children }: { children: React.ReactNode }) 
                         <span
                           className={cn(
                             "h-2 w-2 shrink-0 rounded-full",
-                            isActive ? "bg-emerald-500" : "bg-muted-foreground/30",
+                            isActive ? "bg-primary" : "bg-muted-foreground/30",
                           )}
                           aria-hidden
                         />

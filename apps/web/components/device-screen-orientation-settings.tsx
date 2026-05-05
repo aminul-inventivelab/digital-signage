@@ -79,7 +79,7 @@ export function DeviceScreenOrientationSettings({ device }: { device: Device }) 
                 <Button
                   type="button"
                   variant={current === "landscape" ? "default" : "outline"}
-                  className={current === "landscape" ? "bg-emerald-600 hover:bg-emerald-700" : undefined}
+                  className={current === "landscape" ? "bg-primary text-primary-foreground hover:bg-brand-hover" : undefined}
                   disabled={saving}
                   onClick={() => void save("landscape")}
                 >
@@ -88,7 +88,7 @@ export function DeviceScreenOrientationSettings({ device }: { device: Device }) 
                 <Button
                   type="button"
                   variant={current === "portrait" ? "default" : "outline"}
-                  className={current === "portrait" ? "bg-emerald-600 hover:bg-emerald-700" : undefined}
+                  className={current === "portrait" ? "bg-primary text-primary-foreground hover:bg-brand-hover" : undefined}
                   disabled={saving}
                   onClick={() => void save("portrait")}
                 >

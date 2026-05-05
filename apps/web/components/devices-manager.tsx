@@ -53,7 +53,7 @@ function StatusBadge({ status }: { status: DeviceStatus }) {
     <span
       className={cn(
         "inline-flex items-center rounded-full px-2 py-0.5 text-[0.6875rem] font-semibold uppercase tracking-wide",
-        status === "online" && "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300",
+        status === "online" && "bg-brand-soft text-brand-badge dark:text-brand-onDark",
         status === "offline" && "bg-muted text-muted-foreground",
         status === "pending_pairing" && "bg-amber-500/15 text-amber-900 dark:text-amber-200",
       )}

@@ -5,15 +5,34 @@
 :root {
   /* Google Sans (self-hosted via @fontsource-variable/google-sans) */
   --font-sans: "Google Sans Variable", "Google Sans", ui-sans-serif, system-ui, sans-serif;
+
+  /*
+   * App accent — change only --theme; all UI tints derive via transparency (transparent)
+   * or strength (mix with #000 / #fff). Do not edit the derived lines when retinting.
+   */
+  --theme: #059669;
+  /* Text/icons on solid --theme (mix toward white, not a second hand-picked hex) */
+  --theme-contrast: color-mix(in srgb, var(--theme) 4%, #ffffff);
+  --theme-hover: color-mix(in srgb, var(--theme) 85%, #000000);
+  --theme-soft: color-mix(in srgb, var(--theme) 15%, transparent);
+  --theme-softer: color-mix(in srgb, var(--theme) 10%, transparent);
+  --theme-softest: color-mix(in srgb, var(--theme) 5%, transparent);
+  --theme-faint-20: color-mix(in srgb, var(--theme) 20%, transparent);
+  --theme-faint-25: color-mix(in srgb, var(--theme) 25%, transparent);
+  --theme-faint-30: color-mix(in srgb, var(--theme) 30%, transparent);
+  --theme-foreground-muted: color-mix(in srgb, var(--theme) 50%, #000000);
+  --theme-foreground-strong: color-mix(in srgb, var(--theme) 40%, #000000);
+  --theme-foreground-badge: color-mix(in srgb, var(--theme) 32%, #000000);
+  --theme-foreground-on-dark: color-mix(in srgb, var(--theme) 62%, #ffffff);
+  --theme-foreground-on-dark-soft: color-mix(in srgb, var(--theme) 78%, #ffffff);
+  --theme-foreground-on-light-heading: color-mix(in srgb, var(--theme) 58%, #000000);
+
   --background: 220 23% 97%;
   --foreground: 222 47% 11%;
   --muted: 220 14% 93%;
   --muted-foreground: 215 16% 35%;
-  --primary: 222 47% 11%;
-  --primary-foreground: 0 0% 100%;
   --border: 220 13% 90%;
   --input: 220 13% 90%;
-  --ring: 222 47% 11%;
   /* Slightly tighter corners for compact UI */
   --radius: 0.625rem;
   --card: 0 0% 100%;

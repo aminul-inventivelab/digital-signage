@@ -49,7 +49,7 @@ export function CreatePlaylistForm({
     return (
       <Button
         type="button"
-        className="h-10 w-full gap-2 rounded-lg bg-emerald-600 font-semibold text-white shadow-sm hover:bg-emerald-700"
+        className="h-10 w-full gap-2 rounded-lg bg-primary font-semibold text-primary-foreground shadow-sm hover:bg-brand-hover"
         onClick={() => void createPlaylist()}
         disabled={creating}
       >

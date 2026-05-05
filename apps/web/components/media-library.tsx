@@ -203,7 +203,7 @@ export function MediaLibrary({ userId, publicBaseUrl }: MediaLibraryProps) {
         <div
           className={cn(
             "flex min-h-full flex-col rounded-xl border bg-card shadow-sm transition-colors",
-            isDragActive ? "border-primary ring-2 ring-primary/20" : "border-border",
+            isDragActive ? "border-primary ring-2 ring-brand-faint20" : "border-border",
           )}
         >
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">

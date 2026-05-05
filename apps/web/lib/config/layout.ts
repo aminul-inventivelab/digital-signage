@@ -7,7 +7,7 @@ export const layoutConfig: Omit<AppLayoutConfig, "getPageTitle"> = {
     name: "Signage",
     subtitle: "Console",
     icon: LayoutDashboard,
-    logoColor: "#2CA85A",
+    logoColor: "var(--theme)",
     logoUrl: assets.logoUrl || undefined,
   },
   navItems: [

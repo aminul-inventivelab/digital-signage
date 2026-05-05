@@ -288,7 +288,7 @@ export function PlaylistEditor({ playlistId, initialName, publicBaseUrl }: Playl
             id="playlist-title"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="h-11 max-w-xl border-transparent bg-white text-xl font-semibold tracking-tight shadow-sm ring-1 ring-border focus-visible:ring-emerald-500/30 dark:bg-card"
+            className="h-11 max-w-xl border-transparent bg-white text-xl font-semibold tracking-tight shadow-sm ring-1 ring-border focus-visible:ring-brand-faint30 dark:bg-card"
           />
           <div className="flex flex-wrap gap-2">
             <Button
@@ -326,7 +326,7 @@ export function PlaylistEditor({ playlistId, initialName, publicBaseUrl }: Playl
                     href="/devices"
                     className={cn(
                       buttonVariants({ size: "sm" }),
-                      "inline-flex gap-2 rounded-full bg-emerald-600 font-semibold text-white hover:bg-emerald-700 hover:opacity-100",
+                      "inline-flex gap-2 rounded-full bg-primary font-semibold text-primary-foreground hover:bg-brand-hover hover:opacity-100",
                     )}
                   >
                     <Monitor className="h-4 w-4" />
@@ -357,7 +357,7 @@ export function PlaylistEditor({ playlistId, initialName, publicBaseUrl }: Playl
                           <p className="text-sm font-medium text-foreground">Nothing in this playlist yet</p>
                           <p className="mt-1 text-xs text-muted-foreground">
                             Drag files from the asset panel, or upload on the{" "}
-                            <Link href="/media" className="font-medium text-emerald-700 underline-offset-4 hover:underline">
+                            <Link href="/media" className="font-medium text-brand-strong underline-offset-4 hover:underline">
                               Media
                             </Link>{" "}
                             page.
@@ -373,7 +373,7 @@ export function PlaylistEditor({ playlistId, initialName, publicBaseUrl }: Playl
                                 role="row"
                                 className={cn(
                                   "border-b border-border/80 py-2.5",
-                                  snapshot.isDragging && "rounded-lg bg-emerald-500/5 ring-2 ring-emerald-500/25",
+                                  snapshot.isDragging && "rounded-lg bg-brand-softest ring-2 ring-brand-faint25",
                                 )}
                               >
                                 <div
@@ -486,7 +486,7 @@ export function PlaylistEditor({ playlistId, initialName, publicBaseUrl }: Playl
                   {filteredLibrary.length === 0 ? (
                     <li className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
                       No media matches.{" "}
-                      <Link href="/media" className="font-medium text-emerald-700 underline-offset-4 hover:underline">
+                      <Link href="/media" className="font-medium text-brand-strong underline-offset-4 hover:underline">
                         Upload
                       </Link>
                     </li>
@@ -500,7 +500,7 @@ export function PlaylistEditor({ playlistId, initialName, publicBaseUrl }: Playl
                             {...dragProvided.dragHandleProps}
                             className={cn(
                               "flex items-center gap-2.5 rounded-lg border border-border bg-background p-2 pr-2 shadow-sm",
-                              snapshot.isDragging && "opacity-90 ring-2 ring-emerald-500/30",
+                              snapshot.isDragging && "opacity-90 ring-2 ring-brand-faint30",
                             )}
                           >
                             <LibraryThumb media={m} publicBaseUrl={publicBaseUrl} />

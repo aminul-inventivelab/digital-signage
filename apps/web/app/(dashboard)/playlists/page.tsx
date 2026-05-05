@@ -28,7 +28,7 @@ export default function PlaylistsPage() {
 
   return (
     <div className="flex min-h-[min(420px,60vh)] flex-col items-center justify-center rounded-2xl border border-dashed border-border/80 bg-gradient-to-b from-muted/30 to-transparent px-6 py-16 text-center">
-      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-soft text-brand-strong dark:text-brand-onDark">
         <ListVideo className="h-7 w-7" />
       </div>
       <h1 className="text-xl font-semibold tracking-tight text-foreground">Playlist workspace</h1>
@@ -39,7 +39,7 @@ export default function PlaylistsPage() {
       {latestPlaylist ? (
         <Link
           href={`/playlists/${latestPlaylist.id}`}
-          className="mt-8 inline-flex items-center gap-2 rounded-full bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+          className="mt-8 inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-brand-hover"
         >
           Open latest playlist
           <Sparkles className="h-4 w-4 opacity-90" />

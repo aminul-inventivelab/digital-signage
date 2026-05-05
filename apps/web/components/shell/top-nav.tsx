@@ -39,7 +39,7 @@ interface TopNavBarProps {
 
 export function TopNavBar({ brand, navItems, bottomNavItem, pendingPath }: TopNavBarProps) {
   const pathname = usePathname();
-  const { name, subtitle, icon: BrandIcon, logoColor = "#2CA85A", logoUrl } = brand;
+  const { name, subtitle, icon: BrandIcon, logoColor = "var(--theme)", logoUrl } = brand;
 
   const linkStyle = (active: boolean) =>
     ({
@@ -203,7 +203,7 @@ interface MobileNavDrawerProps {
 export function MobileNavDrawer({ brand, navItems, bottomNavItem, open, onClose, pendingPath }: MobileNavDrawerProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { name, subtitle, icon: BrandIcon, logoColor = "#2CA85A", logoUrl } = brand;
+  const { name, subtitle, icon: BrandIcon, logoColor = "var(--theme)", logoUrl } = brand;
 
   useEffect(() => {
     if (!open) return;

@@ -90,7 +90,7 @@ function ScreenStatusBadge({ status }: { status: DeviceStatus }) {
     <span
       className={cn(
         "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
-        status === "online" && "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300",
+        status === "online" && "bg-brand-soft text-brand-badge dark:text-brand-onDark",
         status === "offline" && "bg-muted text-muted-foreground",
         status === "pending_pairing" && "bg-amber-500/15 text-amber-900 dark:text-amber-200",
       )}
@@ -682,7 +682,7 @@ export function DeviceScreenEditor({ deviceId, ownerId, publicBaseUrl }: DeviceS
                               <p className="text-sm font-medium text-foreground">Nothing in this playlist yet</p>
                               <p className="mt-1 text-xs text-muted-foreground">
                                 Drag files from <strong className="font-medium text-foreground">Assets</strong>, or upload on the{" "}
-                                <Link href="/media" className="font-medium text-emerald-700 underline-offset-4 hover:underline">
+                                <Link href="/media" className="font-medium text-brand-strong underline-offset-4 hover:underline">
                                   Media
                                 </Link>{" "}
                                 page.
@@ -698,7 +698,7 @@ export function DeviceScreenEditor({ deviceId, ownerId, publicBaseUrl }: DeviceS
                                     role="row"
                                     className={cn(
                                       "border-b border-border/80 py-2.5",
-                                      snapshot.isDragging && "rounded-lg bg-emerald-500/5 ring-2 ring-emerald-500/25",
+                                      snapshot.isDragging && "rounded-lg bg-brand-softest ring-2 ring-brand-faint25",
                                     )}
                                   >
                                     <div className={cn("grid items-center gap-2", "grid-cols-[40px_88px_1fr_72px_88px_44px]")}>
@@ -806,7 +806,7 @@ export function DeviceScreenEditor({ deviceId, ownerId, publicBaseUrl }: DeviceS
                         {filteredLibrary.length === 0 ? (
                           <li className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
                             No media matches.{" "}
-                            <Link href="/media" className="font-medium text-emerald-700 underline-offset-4 hover:underline">
+                            <Link href="/media" className="font-medium text-brand-strong underline-offset-4 hover:underline">
                               Upload
                             </Link>
                           </li>
@@ -820,7 +820,7 @@ export function DeviceScreenEditor({ deviceId, ownerId, publicBaseUrl }: DeviceS
                                   {...dragProvided.dragHandleProps}
                                   className={cn(
                                     "flex items-center gap-2.5 rounded-lg border border-border bg-background p-2 pr-2 shadow-sm",
-                                    snapshot.isDragging && "opacity-90 ring-2 ring-emerald-500/30",
+                                    snapshot.isDragging && "opacity-90 ring-2 ring-brand-faint30",
                                   )}
                                 >
                                   <LibraryThumb media={m} publicBaseUrl={publicBaseUrl} />
