@@ -4,7 +4,7 @@ import type { CSSProperties } from "react";
  * Central place for image/logo URLs and theme colors (aligned with Auth Basement template).
  */
 export const assets = {
-  logoUrl: "/brand-logo.png" as string,
+  logoUrl: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/webp/microsoft-365.webp" as string,
   loginBackgroundValue:
     "https://i.pinimg.com/736x/21/16/59/21165977ebcdc14db9ac23044c721820.jpg",
   layoutBackgroundValue: "#040D31",
