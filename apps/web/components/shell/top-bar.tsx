@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useEffect, useState } from "react";
-import { Bell, ChevronDown, LogOut, Menu, Search } from "lucide-react";
+import { Bell, ChevronDown, LogOut, Menu, Search, Settings, UserRound } from "lucide-react";
+import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useNotifications } from "./notifications-context";
@@ -365,6 +366,13 @@ function ProfileDropdown({
     textAlign: "left",
   };
 
+  const linkItemStyle: React.CSSProperties = {
+    ...itemStyle,
+    textDecoration: "none",
+    color: "#374151",
+    boxSizing: "border-box",
+  };
+
   return (
     <div
       ref={containerRef}
@@ -435,6 +443,29 @@ function ProfileDropdown({
               <div style={{ fontSize: "0.75rem", color: "#6B7280", marginTop: "0.125rem" }}>{profileSubtext}</div>
             )}
           </div>
+          <Link
+            prefetch
+            href="/profile"
+            className="topbar-dropdown-item"
+            style={linkItemStyle}
+            role="menuitem"
+            onClick={() => setOpen(false)}
+          >
+            <UserRound size={14} color="#6B7280" strokeWidth={2} />
+            Profile
+          </Link>
+          <Link
+            prefetch
+            href="/settings"
+            className="topbar-dropdown-item"
+            style={linkItemStyle}
+            role="menuitem"
+            onClick={() => setOpen(false)}
+          >
+            <Settings size={14} color="#6B7280" strokeWidth={2} />
+            Settings
+          </Link>
+          <div style={{ height: "0.0625rem", background: "#E8ECF0", margin: "0.25rem 0" }} aria-hidden />
           <button
             type="button"
             className="topbar-dropdown-item topbar-dropdown-item--signout"

@@ -109,6 +109,8 @@ export function PlaylistPreviewButton({
   publicBaseUrl,
   className,
   frame = { kind: "playlist" },
+  /** Icon-only control (e.g. dashboard table); same preview modal as the default trigger. */
+  iconOnly = false,
 }: {
   items: PlaylistItemWithMedia[];
   playlistName?: string | null;
@@ -116,6 +118,7 @@ export function PlaylistPreviewButton({
   className?: string;
   /** Where the preview is opened from — device page uses TV-reported resolution when available. */
   frame?: PlaylistPreviewFrameContext;
+  iconOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const titleId = useId();
@@ -161,17 +164,27 @@ export function PlaylistPreviewButton({
         type="button"
         variant="outline"
         size="sm"
-        className={cn("shrink-0 gap-1.5", className)}
+        className={cn(
+          "shrink-0",
+          iconOnly ? "h-9 w-9 gap-0 p-0" : "gap-1.5",
+          /* Keep hit target when disabled so clicks do not pass through to links behind (e.g. dashboard table). */
+          empty && "!pointer-events-auto cursor-not-allowed",
+          className,
+        )}
         disabled={empty}
-        title={empty ? "Add clips to the playlist to preview" : undefined}
+        title={empty ? "Add clips to the playlist to preview" : iconOnly ? "Preview playlist" : undefined}
         onClick={() => setOpen(true)}
         aria-label="Preview playlist"
       >
-        <ListVideo className="h-4 w-4" strokeWidth={2} aria-hidden />
-        Preview
+        <ListVideo
+          className={cn(iconOnly ? "h-[1.125rem] w-[1.125rem]" : "h-4 w-4")}
+          strokeWidth={2}
+          aria-hidden
+        />
+        {!iconOnly ? "Preview" : null}
       </Button>
       {open && !empty && item ? (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4">
           <button type="button" className="absolute inset-0 bg-black/50" aria-label="Dismiss" onClick={() => setOpen(false)} />
           <div
             role="dialog"

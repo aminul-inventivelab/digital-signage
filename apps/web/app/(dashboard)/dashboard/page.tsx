@@ -1,78 +1,351 @@
 "use client";
 
+import type { DeviceStatus, Playlist, PlaylistItemWithMedia } from "@signage/types";
+import { ArrowRight, Image as ImageIcon, ListVideo, Monitor } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PlaylistPreviewButton } from "@/components/playlist-preview";
+import { getDeviceDisplayDimensionsPx } from "@/components/device-telemetry-panel";
+import { useStaleOnlineTick } from "@/hooks/use-stale-online-tick";
+import type { DeviceWithAssignments } from "@/lib/console-sync";
+import { effectiveDeviceStatus } from "@/lib/device-status";
 import { cn } from "@/lib/utils";
 import { useConsoleDataStore } from "@/stores/console-data-store";
 
+function formatLastSeen(iso: string | null): string {
+  if (!iso) return "Never";
+  const d = new Date(iso);
+  const diff = Date.now() - d.getTime();
+  const sec = Math.floor(diff / 1000);
+  const min = Math.floor(sec / 60);
+  const hr = Math.floor(min / 60);
+  const day = Math.floor(hr / 24);
+  if (day > 30) return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  if (day > 0) return day === 1 ? "Yesterday" : `${day}d ago`;
+  if (hr > 0) return `${hr}h ago`;
+  if (min > 0) return `${min}m ago`;
+  return "Just now";
+}
+
+function activePlaylistRow(device: DeviceWithAssignments) {
+  const rows = device.device_playlists;
+  if (!rows?.length) return null;
+  return rows.find((r) => r.is_active) ?? null;
+}
+
+function activePlaylistLabel(device: DeviceWithAssignments, playlists: Playlist[]): string {
+  const active = activePlaylistRow(device);
+  if (!active) return "—";
+  const p = playlists.find((pl) => pl.id === active.playlist_id);
+  return p?.name ?? `${active.playlist_id.slice(0, 8)}…`;
+}
+
+function activePlaylistId(device: DeviceWithAssignments): string | null {
+  return activePlaylistRow(device)?.playlist_id ?? null;
+}
+
+function statusBadgeClass(status: DeviceStatus) {
+  return cn(
+    "inline-flex items-center rounded-full px-2 py-0.5 text-[0.6875rem] font-semibold uppercase tracking-wide",
+    status === "online" && "bg-brand-soft text-brand-badge dark:text-brand-onDark",
+    status === "offline" && "bg-muted text-muted-foreground",
+    status === "pending_pairing" && "bg-amber-500/15 text-amber-900 dark:text-amber-200",
+  );
+}
+
+function statusLabel(status: DeviceStatus): string {
+  switch (status) {
+    case "online":
+      return "Online";
+    case "offline":
+      return "Offline";
+    case "pending_pairing":
+      return "Pending";
+    default:
+      return status;
+  }
+}
+
+const publicBaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+
+/** Illustrative rows for an empty or sparse dashboard; not persisted. */
+const DUMMY_ACTIVE_ROWS = [
+  {
+    id: "__demo__lobby-east",
+    name: "Lobby East (sample)",
+    status: "online" as const,
+    playlistLabel: "Store promos",
+    lastSeenLabel: "Just now",
+  },
+  {
+    id: "__demo__checkout-2",
+    name: "Checkout line (sample)",
+    status: "online" as const,
+    playlistLabel: "Weekend specials",
+    lastSeenLabel: "4m ago",
+  },
+  {
+    id: "__demo__window-3",
+    name: "Window display (sample)",
+    status: "online" as const,
+    playlistLabel: "Brand reel",
+    lastSeenLabel: "12m ago",
+  },
+] as const;
+
+function DashboardRowPlaylistPreview({
+  device,
+  activePlaylistId,
+  playlistLabel,
+  playlistItemsByPlaylistId,
+  publicBaseUrl,
+}: {
+  device: DeviceWithAssignments | undefined;
+  activePlaylistId: string;
+  playlistLabel: string;
+  playlistItemsByPlaylistId: Record<string, PlaylistItemWithMedia[]>;
+  publicBaseUrl: string;
+}) {
+  const items = playlistItemsByPlaylistId[activePlaylistId] ?? [];
+  const frame =
+    device != null
+      ? { kind: "device" as const, displayPx: getDeviceDisplayDimensionsPx(device) }
+      : { kind: "playlist" as const };
+
+  return (
+    <PlaylistPreviewButton
+      items={items}
+      playlistName={playlistLabel}
+      publicBaseUrl={publicBaseUrl}
+      frame={frame}
+      iconOnly
+      className="rounded-lg border-2 border-primary/40 bg-primary/12 text-primary shadow-sm transition hover:bg-primary/18 hover:border-primary/55 focus-visible:ring-2 focus-visible:ring-ring"
+    />
+  );
+}
+
 export default function DashboardHomePage() {
+  useStaleOnlineTick();
+
   const storeDeviceCount = useConsoleDataStore((s) => s.devices.length);
   const ownerId = useConsoleDataStore((s) => s.ownerId);
   const playlistCount = useConsoleDataStore((s) => s.playlists.length);
   const mediaCount = useConsoleDataStore((s) => s.media.length);
+  const devices = useConsoleDataStore((s) => s.devices) as DeviceWithAssignments[];
+  const playlists = useConsoleDataStore((s) => s.playlists) as Playlist[];
+  const playlistItemsByPlaylistId = useConsoleDataStore((s) => s.playlistItemsByPlaylistId);
+
   const ready = useMemo(() => ownerId != null, [ownerId]);
+
+  const activeDeviceRows = useMemo(() => {
+    return devices
+      .filter((d) => effectiveDeviceStatus(d) === "online")
+      .map((d) => ({
+        id: d.id,
+        name: d.name,
+        status: effectiveDeviceStatus(d),
+        playlistLabel: activePlaylistLabel(d, playlists),
+        lastSeenLabel: formatLastSeen(d.last_seen),
+        activePlaylistId: activePlaylistId(d),
+        isDummy: false as const,
+      }));
+  }, [devices, playlists]);
+
+  const tableRows = useMemo(() => {
+    const real = activeDeviceRows.map((r) => ({ ...r, isDummy: false as const }));
+    const demo = DUMMY_ACTIVE_ROWS.map((r) => ({
+      ...r,
+      activePlaylistId: null as string | null,
+      isDummy: true as const,
+    }));
+    return [...real, ...demo];
+  }, [activeDeviceRows]);
 
   if (!ready) {
     return (
-      <div className="space-y-4">
-        <div className="h-8 w-48 max-w-full animate-pulse rounded-md bg-muted" />
-        <div className="grid gap-4 md:grid-cols-3">
+      <div className="space-y-6">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-32 animate-pulse rounded-xl bg-muted/60" />
+            <div key={i} className="h-36 animate-pulse rounded-xl bg-muted/60" />
           ))}
         </div>
+        <div className="h-56 animate-pulse rounded-xl bg-muted/50" />
       </div>
     );
   }
 
+  const stats = [
+    {
+      href: "/devices",
+      label: "Devices",
+      description: "Linked TV players & assignments",
+      count: storeDeviceCount,
+      icon: Monitor,
+      accent: "from-brand-faint20 to-transparent",
+    },
+    {
+      href: "/playlists",
+      label: "Playlists",
+      description: "Loops assigned to screens",
+      count: playlistCount,
+      icon: ListVideo,
+      accent: "from-brand-faint25 to-transparent",
+    },
+    {
+      href: "/media",
+      label: "Media",
+      description: "Library in storage",
+      count: mediaCount,
+      icon: ImageIcon,
+      accent: "from-brand-soft to-transparent",
+    },
+  ] as const;
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-        <p className="mt-2 text-muted-foreground">
-          Counts come from your local cache. Use <strong>Sync</strong> in the header for the latest from Supabase.
-        </p>
+    <div className="mx-auto max-w-6xl space-y-8 pb-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {stats.map(({ href, label, description, count, icon: Icon, accent }) => (
+          <Card
+            key={href}
+            className="group relative overflow-hidden border-border/90 bg-card shadow-sm transition-shadow hover:shadow-md"
+          >
+            <div
+              className={cn("pointer-events-none absolute inset-x-0 top-0 h-20 bg-gradient-to-b opacity-90", accent)}
+              aria-hidden
+            />
+            <CardHeader className="relative space-y-2 pb-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                  <div className="shrink-0 rounded-lg bg-background/90 p-2 shadow-sm ring-1 ring-border/60 dark:bg-card/90">
+                    <Icon className="h-4 w-4 text-brand-strong dark:text-brand-onDarkSoft" aria-hidden />
+                  </div>
+                  <CardTitle className="truncate text-base font-semibold leading-tight">{label}</CardTitle>
+                </div>
+                <Link
+                  href={href}
+                  className={cn(
+                    buttonVariants({ variant: "ghost", size: "sm" }),
+                    "h-8 shrink-0 gap-1 px-2 text-xs font-semibold text-muted-foreground opacity-80 transition group-hover:opacity-100",
+                  )}
+                >
+                  Open
+                  <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+                </Link>
+              </div>
+              <CardDescription className="text-xs leading-relaxed">{description}</CardDescription>
+            </CardHeader>
+            <CardContent className="relative pt-0">
+              <p className="text-3xl font-semibold tabular-nums tracking-tight text-foreground">{count}</p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="border-border bg-card">
-          <CardHeader>
-            <CardTitle>Devices</CardTitle>
-            <CardDescription>Linked TV players</CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-end justify-between">
-            <p className="text-3xl font-semibold tabular-nums">{storeDeviceCount}</p>
-            <Link href="/devices" className={cn(buttonVariants({ size: "sm" }))}>
-              Open
-            </Link>
-          </CardContent>
-        </Card>
-        <Card className="border-border bg-card">
-          <CardHeader>
-            <CardTitle>Playlists</CardTitle>
-            <CardDescription>Sequences shown on screens</CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-end justify-between">
-            <p className="text-3xl font-semibold tabular-nums">{playlistCount}</p>
-            <Link href="/playlists" className={cn(buttonVariants({ size: "sm" }))}>
-              Open
-            </Link>
-          </CardContent>
-        </Card>
-        <Card className="border-border bg-card">
-          <CardHeader>
-            <CardTitle>Media</CardTitle>
-            <CardDescription>Images &amp; videos in storage</CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-end justify-between">
-            <p className="text-3xl font-semibold tabular-nums">{mediaCount}</p>
-            <Link href="/media" className={cn(buttonVariants({ size: "sm" }))}>
-              Open
-            </Link>
-          </CardContent>
-        </Card>
-      </div>
+
+      <section className="space-y-3">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+          <h2 className="text-sm font-semibold tracking-tight text-foreground">Active devices</h2>
+          <p className="text-xs text-muted-foreground">
+            Online players now; sample rows show how the list looks with more screens.
+          </p>
+        </div>
+        <div className="rounded-xl border border-border/90 bg-card shadow-sm">
+          <div className="overflow-x-auto rounded-xl">
+            <table className="w-full min-w-[32rem] text-left text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <th className="px-4 py-3 font-semibold">Device</th>
+                  <th className="px-4 py-3 font-semibold">Status</th>
+                  <th className="px-4 py-3 font-semibold">Active playlist</th>
+                  <th className="px-4 py-3 font-semibold">Last seen</th>
+                  <th className="px-4 py-3 font-semibold text-right">Screen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tableRows.map((row) => (
+                  <tr
+                    key={row.id}
+                    className={cn(
+                      "border-b border-border/80 last:border-0 transition-colors",
+                      row.isDummy ? "bg-muted/15" : "hover:bg-muted/30",
+                    )}
+                  >
+                    <td className="px-4 py-3">
+                      <div className="flex min-w-0 flex-col gap-0.5">
+                        <span className="truncate font-medium text-foreground">{row.name}</span>
+                        {row.isDummy && (
+                          <span className="text-[0.625rem] font-medium uppercase tracking-wider text-muted-foreground">
+                            Sample
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={statusBadgeClass(row.status)}>{statusLabel(row.status)}</span>
+                    </td>
+                    <td className="min-w-0 px-4 py-3">
+                      <div className="flex min-w-0 max-w-[20rem] items-center gap-2.5">
+                        {row.isDummy ? (
+                          <PlaylistPreviewButton
+                            items={[]}
+                            playlistName={row.playlistLabel}
+                            publicBaseUrl={publicBaseUrl || ""}
+                            iconOnly
+                            className="rounded-lg border-2 border-dashed border-border bg-muted/30 text-muted-foreground shadow-sm"
+                          />
+                        ) : row.activePlaylistId && publicBaseUrl ? (
+                          <DashboardRowPlaylistPreview
+                            device={devices.find((d) => d.id === row.id)}
+                            activePlaylistId={row.activePlaylistId}
+                            playlistLabel={row.playlistLabel}
+                            playlistItemsByPlaylistId={playlistItemsByPlaylistId}
+                            publicBaseUrl={publicBaseUrl}
+                          />
+                        ) : row.activePlaylistId && !publicBaseUrl ? (
+                          <span
+                            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted/40 text-muted-foreground"
+                            title="Set NEXT_PUBLIC_SUPABASE_URL to preview media"
+                          >
+                            <ListVideo className="h-[1.125rem] w-[1.125rem]" strokeWidth={2.35} aria-hidden />
+                          </span>
+                        ) : (
+                          <Link
+                            prefetch
+                            href={`/devices/${row.id}`}
+                            className={cn(
+                              "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-border bg-muted/60 text-muted-foreground shadow-sm transition hover:border-primary/35 hover:bg-primary/8 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            )}
+                            aria-label="No active playlist — open device to assign"
+                            title="No active playlist — open device"
+                          >
+                            <ListVideo className="h-[1.125rem] w-[1.125rem]" strokeWidth={2.35} aria-hidden />
+                          </Link>
+                        )}
+                        <span className="min-w-0 flex-1 truncate text-muted-foreground">{row.playlistLabel}</span>
+                      </div>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 tabular-nums text-muted-foreground">{row.lastSeenLabel}</td>
+                    <td className="px-4 py-3 text-right">
+                      {row.isDummy ? (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      ) : (
+                        <Link
+                          href={`/devices/${row.id}`}
+                          className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "inline-flex h-8 gap-1 px-2 text-xs")}
+                        >
+                          Screen
+                          <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+                        </Link>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
