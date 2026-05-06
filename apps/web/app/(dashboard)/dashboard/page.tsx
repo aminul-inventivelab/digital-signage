@@ -70,28 +70,28 @@ function statusLabel(status: DeviceStatus): string {
 
 const publicBaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 
-/** Illustrative rows for an empty or sparse dashboard; not persisted. */
+/** Illustrative table rows (always appended after real paired devices); not persisted. */
 const DUMMY_ACTIVE_ROWS = [
   {
     id: "__demo__lobby-east",
     name: "Lobby East (sample)",
-    status: "online" as const,
+    status: "offline" as const,
     playlistLabel: "Store promos",
-    lastSeenLabel: "Just now",
+    lastSeenLabel: "2d ago",
   },
   {
     id: "__demo__checkout-2",
     name: "Checkout line (sample)",
-    status: "online" as const,
+    status: "offline" as const,
     playlistLabel: "Weekend specials",
-    lastSeenLabel: "4m ago",
+    lastSeenLabel: "Never",
   },
   {
     id: "__demo__window-3",
     name: "Window display (sample)",
-    status: "online" as const,
+    status: "offline" as const,
     playlistLabel: "Brand reel",
-    lastSeenLabel: "12m ago",
+    lastSeenLabel: "6h ago",
   },
 ] as const;
 
@@ -139,29 +139,28 @@ export default function DashboardHomePage() {
 
   const ready = useMemo(() => ownerId != null, [ownerId]);
 
-  const activeDeviceRows = useMemo(() => {
-    return devices
-      .filter((d) => effectiveDeviceStatus(d) === "online")
-      .map((d) => ({
-        id: d.id,
-        name: d.name,
-        status: effectiveDeviceStatus(d),
-        playlistLabel: activePlaylistLabel(d, playlists),
-        lastSeenLabel: formatLastSeen(d.last_seen),
-        activePlaylistId: activePlaylistId(d),
-        isDummy: false as const,
-      }));
+  /** All screens linked to your account (sync cache), with live online/offline from `last_seen` where applicable. */
+  const pairedDeviceRows = useMemo(() => {
+    return devices.map((d) => ({
+      id: d.id,
+      name: d.name,
+      status: effectiveDeviceStatus(d),
+      playlistLabel: activePlaylistLabel(d, playlists),
+      lastSeenLabel: formatLastSeen(d.last_seen),
+      activePlaylistId: activePlaylistId(d),
+      isDummy: false as const,
+    }));
   }, [devices, playlists]);
 
   const tableRows = useMemo(() => {
-    const real = activeDeviceRows.map((r) => ({ ...r, isDummy: false as const }));
+    const real = pairedDeviceRows.map((r) => ({ ...r, isDummy: false as const }));
     const demo = DUMMY_ACTIVE_ROWS.map((r) => ({
       ...r,
       activePlaylistId: null as string | null,
       isDummy: true as const,
     }));
     return [...real, ...demo];
-  }, [activeDeviceRows]);
+  }, [pairedDeviceRows]);
 
   if (!ready) {
     return (
@@ -245,9 +244,10 @@ export default function DashboardHomePage() {
 
       <section className="space-y-3">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-          <h2 className="text-sm font-semibold tracking-tight text-foreground">Active devices</h2>
+          <h2 className="text-sm font-semibold tracking-tight text-foreground">Paired devices</h2>
           <p className="text-xs text-muted-foreground">
-            Online players now; sample rows show how the list looks with more screens.
+            All linked screens; status reflects reachability (offline when the player has not checked in recently).
+            Sample rows are illustrative only.
           </p>
         </div>
         <div className="rounded-xl border border-border/90 bg-card shadow-sm">
