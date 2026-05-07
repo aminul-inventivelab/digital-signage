@@ -208,10 +208,14 @@ private fun Throwable?.indicatesSslTrustProblem(): Boolean {
 }
 
 /**
- * Recognises Supabase 401 responses caused by an expired or otherwise invalid bearer token. We use
- * this to force a [io.github.jan.supabase.gotrue.Auth.refreshCurrentSession] before retrying — the
- * built-in auto-refresh job can race with cold boot / SSL trust setup and leave us replaying a dead
- * JWT until a hard re-pair, which is exactly what the TV hit after a multi-hour standby.
+ * Recognises Supabase responses caused by an expired or missing bearer token. Used to force a
+ * [io.github.jan.supabase.gotrue.Auth.refreshCurrentSession] before retrying — the built-in
+ * auto-refresh job can race with cold boot / SSL trust setup and leave us replaying a dead JWT
+ * until a hard re-pair, which is exactly what the TV hit after a multi-hour standby.
+ *
+ * Also catches the "unauthenticated" case where an RPC fires before the persisted session is
+ * fully attached (request goes out with anon key only) — refreshing then retrying recovers that
+ * race the same way.
  */
 private fun Throwable?.isExpiredJwtError(): Boolean {
     var t = this
@@ -221,6 +225,9 @@ private fun Throwable?.isExpiredJwtError(): Boolean {
         if (msg != null) {
             if (msg.contains("JWT expired", ignoreCase = true)) return true
             if (msg.contains("PGRST301", ignoreCase = true)) return true
+            // tv_* RPCs raise `RAISE 'unauthenticated'` when auth.uid() is null and no
+            // playback_secret was provided. Treat the same as an expired JWT — refresh & retry.
+            if (msg.contains("unauthenticated", ignoreCase = true)) return true
         }
         t = t.cause
     }
@@ -445,6 +452,17 @@ class MainViewModel(
             lastPlaybackForegroundRecoveryAtElapsedMs = now
             recoverPlaybackAsIfPlaylistChanged(reason = "foreground", force = true)
         }
+        // Refresh the GoTrue session if the cached JWT is about to expire so the next poll/heartbeat
+        // doesn't have to fail with 401 first. Debounced because foreground events fire on resume,
+        // screen-on, and display-state-change in close succession.
+        val lastRefresh = lastProactiveRefreshAttemptElapsedMs.get()
+        if (now - lastRefresh >= proactiveRefreshDebounceMs &&
+            lastProactiveRefreshAttemptElapsedMs.compareAndSet(lastRefresh, now)
+        ) {
+            viewModelScope.launch {
+                runCatching { refreshSessionIfNearExpiry(reason = "foreground") }
+            }
+        }
         signageExo?.onActivityResume()
     }
 
@@ -630,6 +648,11 @@ class MainViewModel(
         supabase.auth.awaitInitialization()
         if (supabase.auth.currentSessionOrNull() == null) {
             ensureAnonymousUserIdOrNull()
+        } else {
+            // Cold-boot or wake-from-multi-day-standby: the JWT loaded from storage is almost certainly
+            // expired before the auto-refresh job re-arms, so trade the cached refresh token for a fresh
+            // access token now instead of letting the next RPC eat a 401.
+            refreshSessionIfNearExpiry(reason = "startup")
         }
 
         val snapshot = withContext(Dispatchers.IO) { dataStore.data.first() }
@@ -722,14 +745,58 @@ class MainViewModel(
     private val authRefreshMutex = Mutex()
 
     /**
-     * Drops the cached bearer token by calling [refreshCurrentSession][io.github.jan.supabase.gotrue.Auth.refreshCurrentSession]
-     * (or, if that fails because the refresh token is dead too, a fresh anonymous sign-in). De-duplicated
+     * Refresh proactively when the persisted JWT is within this many ms of expiry, so the very next
+     * RPC after wake-from-standby goes out with a fresh bearer token instead of forcing a 401 + retry.
+     */
+    private val proactiveRefreshThresholdMs = 5 * 60 * 1000L
+
+    /** At most one proactive refresh per minute on bursty foreground/screen-on events. */
+    private val proactiveRefreshDebounceMs = 60_000L
+
+    private val lastProactiveRefreshAttemptElapsedMs = AtomicLong(0L)
+
+    /**
+     * Inspects the persisted GoTrue session: if it is already past `expiresAt` (or close to it),
+     * forces a [refreshSupabaseSessionOnce] before any RPC fires. After a multi-day standby the
+     * cached JWT is dead long before the auto-refresh job re-arms, so leaning only on the reactive
+     * 401-driven refresh would still log a noisy "JWT expired" warning per RPC type. This avoids it.
+     */
+    private suspend fun refreshSessionIfNearExpiry(reason: String): Boolean {
+        val session = supabase.auth.currentSessionOrNull() ?: return false
+        val nowMs = System.currentTimeMillis()
+        val expiresAtMs = session.expiresAt.toEpochMilliseconds()
+        val msUntilExpiry = expiresAtMs - nowMs
+        if (msUntilExpiry > proactiveRefreshThresholdMs) {
+            return false
+        }
+        Log.i(
+            LOG_TAG,
+            "session expires in ${msUntilExpiry}ms (≤${proactiveRefreshThresholdMs}ms threshold); refreshing proactively ($reason)",
+        )
+        return refreshSupabaseSessionOnce(
+            reason = "proactive:$reason",
+            allowAnonymousFallback = false,
+        )
+    }
+
+
+    /**
+     * Trades the cached refresh token for a new access token via
+     * [refreshCurrentSession][io.github.jan.supabase.gotrue.Auth.refreshCurrentSession]. De-duplicated
      * via [authRefreshMutex] so a burst of parallel JWT-expired RPCs trigger exactly one refresh.
      *
-     * Returns true when the access token was rotated, false when we should give up and let the caller
-     * surface the error to startup recovery.
+     * When [allowAnonymousFallback] is true and the refresh fails (refresh token dead, server
+     * unreachable, etc.) AND a [DeviceKeys.PLAYBACK_SECRET] is stored, falls back to a fresh
+     * anonymous sign-in — the new user id will differ from the original `registered_session_id`,
+     * but the playback_secret path keeps the device authorised. Pass false for *proactive* refresh
+     * so a transient network blip does not silently rotate to a different anonymous user.
+     *
+     * Returns true when the access token was rotated.
      */
-    private suspend fun refreshSupabaseSessionOnce(reason: String): Boolean {
+    private suspend fun refreshSupabaseSessionOnce(
+        reason: String,
+        allowAnonymousFallback: Boolean = true,
+    ): Boolean {
         return authRefreshMutex.withLock {
             try {
                 Log.i(LOG_TAG, "supabase.auth.refreshCurrentSession ($reason)")
@@ -738,11 +805,15 @@ class MainViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
+                if (!allowAnonymousFallback) {
+                    Log.w(
+                        LOG_TAG,
+                        "refreshCurrentSession failed ($reason); leaving existing session in place (proactive refresh, no aggressive fallback)",
+                        e,
+                    )
+                    return@withLock false
+                }
                 Log.w(LOG_TAG, "refreshCurrentSession failed ($reason); attempting anonymous re-auth", e)
-                // Refresh token is dead (or never reached server). Anonymous re-auth gives us a NEW
-                // user id; the device row will not match registered_session_id, but the playback_secret
-                // path in startRegistrationFlow / RPCs keeps it authorised. Without a secret we cannot
-                // safely rotate the user — let the caller bubble the failure to startup recovery.
                 val hasPlaybackSecret = withContext(Dispatchers.IO) {
                     dataStore.data.first()[DeviceKeys.PLAYBACK_SECRET]?.isNotBlank() == true
                 }
