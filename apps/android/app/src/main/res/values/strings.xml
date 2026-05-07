@@ -13,7 +13,10 @@
     <string name="setup_config_hint">Add supabase.url and supabase.anon.key to local.properties, sync Gradle, rebuild, and enable anonymous sign-in in Supabase.</string>
     <string name="error_connection_title">Can\'t reach the service right now.</string>
     <string name="error_connection_hint">Check the network. If this keeps happening, contact support with the time this appeared.</string>
+    <string name="error_ssl_trust_title">Secure connection failed.</string>
+    <string name="error_ssl_trust_hint">This TV does not trust the security certificate for your Supabase server (often on Android emulator images without updated CA certificates, wrong date and time, or a captive Wi‑Fi portal). Try a system update, correct date and time, another network, or a physical Android TV / Play‑certified device.</string>
     <string name="error_relaunch_title">Pairing was cleared.</string>
     <string name="error_relaunch_hint">Close and reopen this app, then enter a new pairing code from the web app.</string>
     <string name="button_reset_registration">Reset registration</string>
+    <string name="button_try_again">Try again</string>
 </resources>

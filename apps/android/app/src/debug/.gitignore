@@ -1,0 +1,8 @@
+# Developer-machine specific corporate / proxy certificates used by the
+# debug build to talk to Supabase through SSL inspection.
+# These belong to whoever's machine the build runs on; do NOT commit.
+res/raw/dev_corp_root
+res/raw/dev_corp_intermediate
+res/raw/dev_corp_*.pem
+res/raw/dev_corp_*.crt
+res/xml/network_security_config.xml

@@ -15,6 +15,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.util.UnstableApi
 import io.github.jan.supabase.createSupabaseClient
+import io.github.jan.supabase.exceptions.UnauthorizedRestException
 import io.github.jan.supabase.gotrue.Auth
 import io.github.jan.supabase.gotrue.auth
 import io.github.jan.supabase.postgrest.Postgrest
@@ -37,14 +38,18 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import java.security.cert.CertPathValidatorException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+import javax.net.ssl.SSLHandshakeException
 
 private const val LOG_TAG = "SignageTV"
 
@@ -123,6 +128,7 @@ private data class TvGetPlaybackRevisionResult(
     val ok: Boolean,
     @SerialName("deviceName") val deviceName: String? = null,
     @SerialName("playbackDisabled") val playbackDisabled: Boolean = false,
+    @SerialName("playbackSecret") val playbackSecret: String? = null,
     @SerialName("contentRevision") val contentRevision: String? = null,
     @SerialName("playlistId") val playlistId: String? = null,
     @SerialName("playlistName") val playlistName: String? = null,
@@ -166,6 +172,59 @@ private sealed interface PlaybackLoadResult {
 
     /** [tv_get_playback_slides] returned ok=false — local credentials do not authorize this device. */
     data object NeedsRePairing : PlaybackLoadResult
+}
+
+private class AnonymousAuthSslTrustException(cause: Throwable?) : Exception(
+    "TLS certificate validation failed",
+    cause,
+)
+
+private data class AnonymousSignInAttempt(
+    val userId: String?,
+    val lastFailure: Throwable?,
+)
+
+private fun Throwable?.indicatesSslTrustProblem(): Boolean {
+    var t = this
+    while (t != null) {
+        when (t) {
+            is CertPathValidatorException -> return true
+            is SSLHandshakeException -> {
+                var c = t.cause
+                while (c != null) {
+                    if (c is CertPathValidatorException) return true
+                    c = c.cause
+                }
+            }
+        }
+        val msg = t.message
+        if (msg != null) {
+            if (msg.contains("Trust anchor", ignoreCase = true)) return true
+            if (msg.contains("CertPathValidatorException", ignoreCase = true)) return true
+        }
+        t = t.cause
+    }
+    return false
+}
+
+/**
+ * Recognises Supabase 401 responses caused by an expired or otherwise invalid bearer token. We use
+ * this to force a [io.github.jan.supabase.gotrue.Auth.refreshCurrentSession] before retrying — the
+ * built-in auto-refresh job can race with cold boot / SSL trust setup and leave us replaying a dead
+ * JWT until a hard re-pair, which is exactly what the TV hit after a multi-hour standby.
+ */
+private fun Throwable?.isExpiredJwtError(): Boolean {
+    var t = this
+    while (t != null) {
+        if (t is UnauthorizedRestException) return true
+        val msg = t.message
+        if (msg != null) {
+            if (msg.contains("JWT expired", ignoreCase = true)) return true
+            if (msg.contains("PGRST301", ignoreCase = true)) return true
+        }
+        t = t.cause
+    }
+    return false
 }
 
 @OptIn(UnstableApi::class)
@@ -276,13 +335,15 @@ class MainViewModel(
     private suspend fun fetchPlaybackRevision(deviceId: String): TvGetPlaybackRevisionResult {
         val storedPlaybackSecret = dataStore.data.first()[DeviceKeys.PLAYBACK_SECRET]
         return retrySupabaseNetwork("tv_get_playback_revision") {
-            supabase.postgrest.rpc(
+            val res = supabase.postgrest.rpc(
                 "tv_get_playback_revision",
                 TvGetPlaybackParams(
                     pDeviceId = deviceId,
                     pPlaybackSecret = storedPlaybackSecret?.takeIf { it.isNotBlank() },
                 ),
             ).decodeAs<TvGetPlaybackRevisionResult>()
+            persistPlaybackSecret(res.playbackSecret)
+            res
         }
     }
 
@@ -294,7 +355,7 @@ class MainViewModel(
 
     private suspend fun sendDeviceHeartbeat(deviceId: String) {
         val storedPlaybackSecret = dataStore.data.first()[DeviceKeys.PLAYBACK_SECRET]
-        runCatching {
+        withAuthRefreshOnExpiry("tv_device_heartbeat") {
             supabase.postgrest.rpc(
                 "tv_device_heartbeat",
                 TvGetPlaybackParams(
@@ -469,6 +530,13 @@ class MainViewModel(
         dataStore.edit { it.remove(DeviceKeys.CACHED_PLAYBACK) }
     }
 
+    private suspend fun persistPlaybackSecret(playbackSecret: String?) {
+        val secret = playbackSecret?.takeIf { it.isNotBlank() } ?: return
+        dataStore.edit { prefs ->
+            prefs[DeviceKeys.PLAYBACK_SECRET] = secret
+        }
+    }
+
     /** Clears locally stored device identity so the app can register fresh (new pairing code). */
     private suspend fun clearLocalDevicePairingKeys() {
         dataStore.edit { prefs ->
@@ -491,6 +559,10 @@ class MainViewModel(
             createNewDeviceAndPoll()
         } catch (t: Throwable) {
             if (t is CancellationException) throw t
+            if (t is AnonymousAuthSslTrustException || t.indicatesSslTrustProblem()) {
+                _state.value = MainUiState.Error(TvUserFacingError.SSL_TRUST_FAILED)
+                return
+            }
             Log.e(LOG_TAG, "recoverPairingAfterPlaybackRejected failed; retrying full startup", t)
             runStartupUntilConnected()
         }
@@ -526,6 +598,17 @@ class MainViewModel(
                 return
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
+                if (t is AnonymousAuthSslTrustException || t.indicatesSslTrustProblem()) {
+                    Log.e(
+                        LOG_TAG,
+                        "TvUserFacingError ${TvUserFacingError.SSL_TRUST_FAILED}: HTTPS certificate not trusted by this device. " +
+                            "Current device time: ${java.util.Date()}. Check if system clock is correct.",
+                        t,
+                    )
+                    _state.value = MainUiState.Error(TvUserFacingError.SSL_TRUST_FAILED)
+                    releaseSignageExo()
+                    return
+                }
                 Log.e(
                     LOG_TAG,
                     "TvUserFacingError ${TvUserFacingError.STARTUP_FAILED} startRegistrationFlow (retry in ${backoffMs}ms): ${t.message}",
@@ -629,23 +712,55 @@ class MainViewModel(
             .firstOrNull()
 
     /**
-     * PostgREST calls can fail transiently on cold emulator / DNS / TLS handshakes.
-     * Retries before surfacing [TvUserFacingError.STARTUP_FAILED].
+     * PostgREST calls can fail transiently on cold emulator / DNS / TLS handshakes — and after a
+     * multi-hour standby the persisted JWT is dead before the first call goes out, so we route
+     * through [retrySupabaseNetwork] to pick up its JWT-expired refresh logic.
      */
-    private suspend fun fetchDeviceRowWithRetry(deviceId: String): DeviceRow? {
-        var lastError: Throwable? = null
-        repeat(SUPABASE_NETWORK_RETRY_MAX) { attempt ->
-            runCatching {
-                return fetchDeviceRow(deviceId)
-            }.onFailure { e ->
-                lastError = e
-                Log.w(LOG_TAG, "fetchDeviceRow failed (attempt ${attempt + 1}/$SUPABASE_NETWORK_RETRY_MAX)", e)
-                if (attempt < SUPABASE_NETWORK_RETRY_MAX - 1) {
-                    delay(minOf(2000L, 250L shl attempt))
+    private suspend fun fetchDeviceRowWithRetry(deviceId: String): DeviceRow? =
+        retrySupabaseNetwork("devices.select") { fetchDeviceRow(deviceId) }
+
+    private val authRefreshMutex = Mutex()
+
+    /**
+     * Drops the cached bearer token by calling [refreshCurrentSession][io.github.jan.supabase.gotrue.Auth.refreshCurrentSession]
+     * (or, if that fails because the refresh token is dead too, a fresh anonymous sign-in). De-duplicated
+     * via [authRefreshMutex] so a burst of parallel JWT-expired RPCs trigger exactly one refresh.
+     *
+     * Returns true when the access token was rotated, false when we should give up and let the caller
+     * surface the error to startup recovery.
+     */
+    private suspend fun refreshSupabaseSessionOnce(reason: String): Boolean {
+        return authRefreshMutex.withLock {
+            try {
+                Log.i(LOG_TAG, "supabase.auth.refreshCurrentSession ($reason)")
+                supabase.auth.refreshCurrentSession()
+                true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Log.w(LOG_TAG, "refreshCurrentSession failed ($reason); attempting anonymous re-auth", e)
+                // Refresh token is dead (or never reached server). Anonymous re-auth gives us a NEW
+                // user id; the device row will not match registered_session_id, but the playback_secret
+                // path in startRegistrationFlow / RPCs keeps it authorised. Without a secret we cannot
+                // safely rotate the user — let the caller bubble the failure to startup recovery.
+                val hasPlaybackSecret = withContext(Dispatchers.IO) {
+                    dataStore.data.first()[DeviceKeys.PLAYBACK_SECRET]?.isNotBlank() == true
+                }
+                if (!hasPlaybackSecret) {
+                    return@withLock false
+                }
+                runCatching { supabase.auth.signOut() }
+                try {
+                    supabase.auth.signInAnonymously()
+                    true
+                } catch (e2: CancellationException) {
+                    throw e2
+                } catch (e2: Throwable) {
+                    Log.w(LOG_TAG, "anonymous re-auth fallback failed ($reason)", e2)
+                    false
                 }
             }
         }
-        throw lastError ?: IllegalStateException("fetchDeviceRowWithRetry exhausted")
     }
 
     private suspend fun <T> retrySupabaseNetwork(
@@ -653,11 +768,18 @@ class MainViewModel(
         block: suspend () -> T,
     ): T {
         var lastError: Throwable? = null
+        var attemptedAuthRefresh = false
         repeat(SUPABASE_NETWORK_RETRY_MAX) { attempt ->
             runCatching {
                 return block()
             }.onFailure { e ->
                 lastError = e
+                if (e.isExpiredJwtError() && !attemptedAuthRefresh) {
+                    attemptedAuthRefresh = true
+                    Log.w(LOG_TAG, "$label: JWT expired/unauthorized, refreshing session before retry")
+                    val ok = refreshSupabaseSessionOnce(reason = label)
+                    if (ok) return@onFailure // retry immediately with the fresh token
+                }
                 Log.w(LOG_TAG, "$label failed (attempt ${attempt + 1}/$SUPABASE_NETWORK_RETRY_MAX)", e)
                 if (attempt < SUPABASE_NETWORK_RETRY_MAX - 1) {
                     delay(minOf(3000L, 250L shl attempt))
@@ -667,24 +789,57 @@ class MainViewModel(
         throw lastError ?: IllegalStateException(label)
     }
 
+    /**
+     * Fire-and-forget RPC helper that refreshes the session once on JWT expiry and retries before
+     * giving up. Used for telemetry / heartbeats where we don't want to surface failures, but do
+     * want the next call to send a valid bearer token.
+     */
+    private suspend fun <T> withAuthRefreshOnExpiry(
+        label: String,
+        block: suspend () -> T,
+    ): Result<T> = runCatching {
+        try {
+            block()
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            if (!e.isExpiredJwtError()) throw e
+            Log.w(LOG_TAG, "$label: JWT expired/unauthorized, refreshing session before single retry")
+            refreshSupabaseSessionOnce(reason = label)
+            block()
+        }
+    }
+
     private suspend fun ensureAnonymousUserIdOrNull(): String? {
         supabase.auth.currentUserOrNull()?.id?.let {
             return it
         }
-        signInAnonymouslyWithRetries(clearSessionFirst = false)?.let {
+        val first = signInAnonymouslyWithRetries(clearSessionFirst = false)
+        first.userId?.let {
             return it
+        }
+        if (first.lastFailure.indicatesSslTrustProblem()) {
+            throw AnonymousAuthSslTrustException(first.lastFailure)
         }
         // Stale GoTrue session (e.g. project URL/key changed in Gradle) can block new anonymous sessions.
         Log.w(LOG_TAG, "anonymous sign-in failed after retries; clearing auth session and retrying")
         runCatching { supabase.auth.signOut() }
-        return signInAnonymouslyWithRetries(clearSessionFirst = true)
+        val second = signInAnonymouslyWithRetries(clearSessionFirst = true)
+        second.userId?.let {
+            return it
+        }
+        if (second.lastFailure.indicatesSslTrustProblem()) {
+            throw AnonymousAuthSslTrustException(second.lastFailure)
+        }
+        return null
     }
 
-    private suspend fun signInAnonymouslyWithRetries(clearSessionFirst: Boolean): String? {
+    private suspend fun signInAnonymouslyWithRetries(clearSessionFirst: Boolean): AnonymousSignInAttempt {
+        var lastFailure: Throwable? = null
         repeat(ANONYMOUS_SIGN_IN_MAX_ATTEMPTS) { attempt ->
             runCatching {
                 supabase.auth.signInAnonymously()
             }.onFailure { e ->
+                lastFailure = e
                 Log.w(
                     LOG_TAG,
                     "signInAnonymously failed (attempt ${attempt + 1}/$ANONYMOUS_SIGN_IN_MAX_ATTEMPTS, afterClear=$clearSessionFirst)",
@@ -692,11 +847,11 @@ class MainViewModel(
                 )
             }
             supabase.auth.currentUserOrNull()?.id?.let {
-                return it
+                return AnonymousSignInAttempt(it, null)
             }
             delay(minOf(4000L, 200L shl minOf(attempt, 4)))
         }
-        return null
+        return AnonymousSignInAttempt(null, lastFailure)
     }
 
     private suspend fun createNewDeviceAndPoll() {
@@ -752,7 +907,7 @@ class MainViewModel(
         while (true) {
             val row =
                 try {
-                    fetchDeviceRow(deviceId)
+                    retrySupabaseNetwork("devices.select.poll") { fetchDeviceRow(deviceId) }
                 } catch (_: Exception) {
                     delay(10_000)
                     continue
@@ -921,7 +1076,7 @@ class MainViewModel(
         errorCode: String,
         deviceId: String,
     ) {
-        runCatching {
+        withAuthRefreshOnExpiry("tv_merge_playback_snapshot") {
             supabase.postgrest.rpc(
                 "tv_merge_playback_snapshot",
                 TvMergePlaybackSnapshotParams(
@@ -947,21 +1102,25 @@ class MainViewModel(
         telemetryJob =
             viewModelScope.launch {
                 while (isActive) {
-                    runCatching {
-                        val payload =
+                    val payload =
+                        runCatching {
                             DeviceTelemetryCollector.buildPayload(
                                 getApplication(),
                                 lastContentRevision.get(),
                             )
-                        supabase.postgrest.rpc(
-                            "tv_device_report_telemetry",
-                            TvDeviceReportTelemetryParams(
-                                pDeviceId = deviceId,
-                                pTelemetry = payload,
-                            ),
-                        )
-                    }.onFailure { e ->
-                        Log.d(LOG_TAG, "tv_device_report_telemetry failed", e)
+                        }.getOrNull()
+                    if (payload != null) {
+                        withAuthRefreshOnExpiry("tv_device_report_telemetry") {
+                            supabase.postgrest.rpc(
+                                "tv_device_report_telemetry",
+                                TvDeviceReportTelemetryParams(
+                                    pDeviceId = deviceId,
+                                    pTelemetry = payload,
+                                ),
+                            )
+                        }.onFailure { e ->
+                            Log.d(LOG_TAG, "tv_device_report_telemetry failed", e)
+                        }
                     }
                     delay(TELEMETRY_INTERVAL_MS)
                 }
@@ -972,7 +1131,7 @@ class MainViewModel(
         deviceName: String,
         deviceId: String,
     ): PlaybackLoadResult = withContext(Dispatchers.IO) {
-        val row = runCatching { fetchDeviceRow(deviceId) }.getOrNull()
+        val row = withAuthRefreshOnExpiry("devices.select.playback") { fetchDeviceRow(deviceId) }.getOrNull()
         val screenOrientation =
             row?.screenOrientation?.trim()?.lowercase()?.takeIf { it == "portrait" || it == "landscape" }
                 ?: (_state.value as? MainUiState.Playback)?.takeIf { it.deviceId == deviceId }
@@ -981,13 +1140,15 @@ class MainViewModel(
 
         val storedPlaybackSecret = dataStore.data.first()[DeviceKeys.PLAYBACK_SECRET]
         val res =
-            supabase.postgrest.rpc(
-                "tv_get_playback_slides",
-                TvGetPlaybackParams(
-                    pDeviceId = deviceId,
-                    pPlaybackSecret = storedPlaybackSecret?.takeIf { it.isNotBlank() },
-                ),
-            ).decodeAs<TvGetPlaybackResult>()
+            retrySupabaseNetwork("tv_get_playback_slides") {
+                supabase.postgrest.rpc(
+                    "tv_get_playback_slides",
+                    TvGetPlaybackParams(
+                        pDeviceId = deviceId,
+                        pPlaybackSecret = storedPlaybackSecret?.takeIf { it.isNotBlank() },
+                    ),
+                ).decodeAs<TvGetPlaybackResult>()
+            }
         Log.d(
             LOG_TAG,
             "tv_get_playback_slides ok=${res.ok} playbackDisabled=${res.playbackDisabled} playlistName=${res.playlistName} slidesCount=${res.slides.size} rev=${res.contentRevision}",
@@ -995,11 +1156,7 @@ class MainViewModel(
         if (res.ok) {
             lastContentRevision.set(res.contentRevision)
         }
-        if (!res.playbackSecret.isNullOrBlank()) {
-            dataStore.edit { prefs ->
-                prefs[DeviceKeys.PLAYBACK_SECRET] = res.playbackSecret!!
-            }
-        }
+        persistPlaybackSecret(res.playbackSecret)
         if (!res.ok) {
             Log.w(
                 LOG_TAG,
@@ -1098,6 +1255,13 @@ class MainViewModel(
             }
             Log.w(LOG_TAG, "TvUserFacingError ${TvUserFacingError.RELAUNCH_TO_PAIR}: user requested reset; app must be restarted to pair again")
             _state.value = MainUiState.Error(TvUserFacingError.RELAUNCH_TO_PAIR)
+        }
+    }
+
+    /** After an SSL / connection error screen, run the normal startup path again (e.g. user fixed date, network, or emulator trust store). */
+    fun retryAfterConnectionError() {
+        viewModelScope.launch {
+            runStartupUntilConnected()
         }
     }
 

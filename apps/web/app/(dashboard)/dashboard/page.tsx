@@ -46,15 +46,6 @@ function activePlaylistId(device: DeviceWithAssignments): string | null {
   return activePlaylistRow(device)?.playlist_id ?? null;
 }
 
-function statusBadgeClass(status: DeviceStatus) {
-  return cn(
-    "inline-flex items-center rounded-full px-2 py-0.5 text-[0.6875rem] font-semibold uppercase tracking-wide",
-    status === "online" && "bg-brand-soft text-brand-badge dark:text-brand-onDark",
-    status === "offline" && "bg-muted text-muted-foreground",
-    status === "pending_pairing" && "bg-amber-500/15 text-amber-900 dark:text-amber-200",
-  );
-}
-
 function statusLabel(status: DeviceStatus): string {
   switch (status) {
     case "online":
@@ -66,6 +57,58 @@ function statusLabel(status: DeviceStatus): string {
     default:
       return status;
   }
+}
+
+/** Status pill for the paired-devices table — online uses a live green indicator. */
+function DeviceStatusChip({ status }: { status: DeviceStatus }) {
+  const label = statusLabel(status);
+
+  if (status === "online") {
+    return (
+      <span
+        className={cn(
+          "inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[0.8125rem] font-semibold tracking-tight",
+          "border-emerald-500/25 bg-emerald-500/[0.09] text-emerald-950 shadow-sm",
+          "dark:border-emerald-400/35 dark:bg-emerald-500/[0.14] dark:text-emerald-50 dark:shadow-[0_0_0_1px_rgba(16,185,129,0.12)_inset]",
+        )}
+      >
+        <span className="relative flex h-2 w-2 shrink-0 items-center justify-center" aria-hidden>
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-35" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(34,197,94,0.9)] ring-2 ring-emerald-400/50 dark:bg-emerald-400 dark:shadow-[0_0_10px_rgba(52,211,153,0.95)] dark:ring-emerald-300/40" />
+        </span>
+        {label}
+      </span>
+    );
+  }
+
+  if (status === "offline") {
+    return (
+      <span
+        className={cn(
+          "inline-flex items-center gap-2 rounded-full border border-border bg-muted/70 px-2.5 py-1 text-[0.8125rem] font-semibold tracking-tight text-muted-foreground shadow-sm",
+          "dark:bg-muted/40 dark:text-muted-foreground",
+        )}
+      >
+        <span
+          className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/35 ring-2 ring-border/80 dark:bg-muted-foreground/40"
+          aria-hidden
+        />
+        {label}
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[0.8125rem] font-semibold tracking-tight shadow-sm",
+        "border-amber-500/25 bg-amber-500/[0.1] text-amber-950 dark:border-amber-400/30 dark:bg-amber-500/15 dark:text-amber-100",
+      )}
+    >
+      <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500 shadow-sm ring-2 ring-amber-400/45 dark:bg-amber-400" aria-hidden />
+      {label}
+    </span>
+  );
 }
 
 const publicBaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -282,7 +325,7 @@ export default function DashboardHomePage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={statusBadgeClass(row.status)}>{statusLabel(row.status)}</span>
+                      <DeviceStatusChip status={row.status} />
                     </td>
                     <td className="min-w-0 px-4 py-3">
                       <div className="flex min-w-0 max-w-[20rem] items-center gap-2.5">

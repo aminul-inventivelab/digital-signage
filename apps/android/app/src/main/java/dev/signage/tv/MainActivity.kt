@@ -94,33 +94,37 @@ class MainActivity : ComponentActivity() {
                             )
 
                         is MainUiState.Error -> {
-                            val message: String
-                            val hint: String
-                            val showReset: Boolean
-                            if (ui.code == TvUserFacingError.RELAUNCH_TO_PAIR) {
-                                message = stringResource(R.string.error_relaunch_title)
-                                hint = stringResource(R.string.error_relaunch_hint)
-                                showReset = false
-                            } else {
-                                message = stringResource(R.string.error_connection_title)
-                                hint = stringResource(R.string.error_connection_hint)
-                                showReset = true
-                            }
-                            TvStandbyBrandingScreen(
-                                message = message,
-                                hint = hint,
-                                footerContent =
-                                    if (showReset) {
-                                        {
+                            when (ui.code) {
+                                TvUserFacingError.RELAUNCH_TO_PAIR ->
+                                    TvStandbyBrandingScreen(
+                                        message = stringResource(R.string.error_relaunch_title),
+                                        hint = stringResource(R.string.error_relaunch_hint),
+                                    )
+
+                                TvUserFacingError.SSL_TRUST_FAILED ->
+                                    TvStandbyBrandingScreen(
+                                        message = stringResource(R.string.error_ssl_trust_title),
+                                        hint = stringResource(R.string.error_ssl_trust_hint),
+                                        footerContent = {
+                                            Spacer(modifier = Modifier.height(28.dp))
+                                            Button(onClick = { viewModel.retryAfterConnectionError() }) {
+                                                Text(stringResource(R.string.button_try_again))
+                                            }
+                                        },
+                                    )
+
+                                else ->
+                                    TvStandbyBrandingScreen(
+                                        message = stringResource(R.string.error_connection_title),
+                                        hint = stringResource(R.string.error_connection_hint),
+                                        footerContent = {
                                             Spacer(modifier = Modifier.height(28.dp))
                                             Button(onClick = { viewModel.resetRegistration() }) {
                                                 Text(stringResource(R.string.button_reset_registration))
                                             }
-                                        }
-                                    } else {
-                                        null
-                                    },
-                            )
+                                        },
+                                    )
+                            }
                         }
 
                         is MainUiState.AwaitingLink -> PairingScreen(ui)
