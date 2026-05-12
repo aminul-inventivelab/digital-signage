@@ -25,7 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { DeviceWithAssignments } from "@/lib/console-sync";
 import { useStaleOnlineTick } from "@/hooks/use-stale-online-tick";
-import { effectiveDeviceStatus } from "@/lib/device-status";
+import { effectiveDeviceStatus, formatDeviceLastSeen } from "@/lib/device-status";
 import { formatPlaylistClockLabel } from "@/lib/playlist-timing";
 import { cn } from "@/lib/utils";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -55,21 +55,6 @@ function mediaUrl(publicBaseUrl: string, storagePath: string) {
   const base = publicBaseUrl.replace(/\/$/, "");
   const path = storagePath.split("/").map(encodeURIComponent).join("/");
   return `${base}/storage/v1/object/public/media/${path}`;
-}
-
-function formatLastSeen(iso: string | null): string {
-  if (!iso) return "Never seen";
-  const d = new Date(iso);
-  const diff = Date.now() - d.getTime();
-  const sec = Math.floor(diff / 1000);
-  const min = Math.floor(sec / 60);
-  const hr = Math.floor(min / 60);
-  const day = Math.floor(hr / 24);
-  if (day > 30) return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  if (day > 0) return day === 1 ? "Yesterday" : `${day} days ago`;
-  if (hr > 0) return `${hr}h ago`;
-  if (min > 0) return `${min}m ago`;
-  return "Just now";
 }
 
 function statusLabel(status: DeviceStatus): string {
@@ -546,7 +531,7 @@ export function DeviceScreenEditor({ deviceId, ownerId, publicBaseUrl }: DeviceS
                     className="inline-flex max-w-full items-center gap-1 rounded-full border border-border/80 bg-muted/35 px-2.5 py-0.5 text-[0.6875rem] leading-tight tabular-nums"
                   >
                     <span className="shrink-0 text-muted-foreground">Last seen</span>
-                    <span className="min-w-0 font-medium text-foreground">{formatLastSeen(device.last_seen)}</span>
+                    <span className="min-w-0 font-medium text-foreground">{formatDeviceLastSeen(device.last_seen)}</span>
                   </span>
                 </div>
                 {(screenHardwareBasics.brand || screenHardwareBasics.model || screenHardwareBasics.screenSize) && (

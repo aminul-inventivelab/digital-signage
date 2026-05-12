@@ -15,6 +15,11 @@ export function getSupabaseBrowserClient(): SupabaseClient {
     throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
   }
 
-  browserClient = createBrowserClient(url, anonKey);
+  const fetchNoStore: typeof fetch = (input, init) =>
+    fetch(input, { ...init, cache: "no-store" });
+
+  browserClient = createBrowserClient(url, anonKey, {
+    global: { fetch: fetchNoStore },
+  });
   return browserClient;
 }

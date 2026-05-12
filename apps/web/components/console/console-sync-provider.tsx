@@ -41,6 +41,9 @@ export function ConsoleSyncProvider({ userId, children }: { userId: string; chil
   const setSyncing = useConsoleDataStore((s) => s.setSyncing);
   const setSyncError = useConsoleDataStore((s) => s.setSyncError);
 
+  /** Coalesce overlapping syncs (timer + manual Sync) so every caller awaits the same pull. */
+  const syncInFlightRef = useRef<Promise<void> | null>(null);
+
   const [cacheReady, setCacheReady] = useState(() => useConsoleDataStore.persist.hasHydrated());
 
   useEffect(() => {
@@ -54,19 +57,27 @@ export function ConsoleSyncProvider({ userId, children }: { userId: string; chil
   }, []);
 
   const syncNow = useCallback(async () => {
-    if (useConsoleDataStore.getState().isSyncing) return;
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseBrowserClient();
-      const snapshot = await pullConsoleData(supabase, userId);
-      applySnapshot(userId, snapshot, Date.now());
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Sync failed";
-      setSyncError(message);
-    } finally {
-      setSyncing(false);
+    if (syncInFlightRef.current) {
+      return syncInFlightRef.current;
     }
+    const run = async () => {
+      setSyncing(true);
+      setSyncError(null);
+      try {
+        const supabase = getSupabaseBrowserClient();
+        const snapshot = await pullConsoleData(supabase, userId);
+        applySnapshot(userId, snapshot, Date.now());
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Sync failed";
+        setSyncError(message);
+      } finally {
+        setSyncing(false);
+        syncInFlightRef.current = null;
+      }
+    };
+    const p = run();
+    syncInFlightRef.current = p;
+    return p;
   }, [applySnapshot, setSyncError, setSyncing, userId]);
 
   const syncNowRef = useRef(syncNow);

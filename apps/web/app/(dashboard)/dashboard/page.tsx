@@ -10,24 +10,9 @@ import { PlaylistPreviewButton } from "@/components/playlist-preview";
 import { getDeviceDisplayDimensionsPx } from "@/components/device-telemetry-panel";
 import { useStaleOnlineTick } from "@/hooks/use-stale-online-tick";
 import type { DeviceWithAssignments } from "@/lib/console-sync";
-import { effectiveDeviceStatus } from "@/lib/device-status";
+import { effectiveDeviceStatus, formatDeviceLastSeen } from "@/lib/device-status";
 import { cn } from "@/lib/utils";
 import { useConsoleDataStore } from "@/stores/console-data-store";
-
-function formatLastSeen(iso: string | null): string {
-  if (!iso) return "Never";
-  const d = new Date(iso);
-  const diff = Date.now() - d.getTime();
-  const sec = Math.floor(diff / 1000);
-  const min = Math.floor(sec / 60);
-  const hr = Math.floor(min / 60);
-  const day = Math.floor(hr / 24);
-  if (day > 30) return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  if (day > 0) return day === 1 ? "Yesterday" : `${day}d ago`;
-  if (hr > 0) return `${hr}h ago`;
-  if (min > 0) return `${min}m ago`;
-  return "Just now";
-}
 
 function activePlaylistRow(device: DeviceWithAssignments) {
   const rows = device.device_playlists;
@@ -189,7 +174,7 @@ export default function DashboardHomePage() {
       name: d.name,
       status: effectiveDeviceStatus(d),
       playlistLabel: activePlaylistLabel(d, playlists),
-      lastSeenLabel: formatLastSeen(d.last_seen),
+      lastSeenLabel: formatDeviceLastSeen(d.last_seen),
       activePlaylistId: activePlaylistId(d),
       isDummy: false as const,
     }));

@@ -12,28 +12,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { DeviceWithAssignments } from "@/lib/console-sync";
 import { useStaleOnlineTick } from "@/hooks/use-stale-online-tick";
-import { effectiveDeviceStatus } from "@/lib/device-status";
+import { effectiveDeviceStatus, formatDeviceLastSeen } from "@/lib/device-status";
 import { cn } from "@/lib/utils";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useConsoleDataStore } from "@/stores/console-data-store";
 import { deviceTelemetrySummaryLine } from "@/components/device-telemetry-panel";
 
 type StatusFilter = "all" | DeviceStatus;
-
-function formatLastSeen(iso: string | null): string {
-  if (!iso) return "Never seen";
-  const d = new Date(iso);
-  const diff = Date.now() - d.getTime();
-  const sec = Math.floor(diff / 1000);
-  const min = Math.floor(sec / 60);
-  const hr = Math.floor(min / 60);
-  const day = Math.floor(hr / 24);
-  if (day > 30) return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  if (day > 0) return day === 1 ? "Yesterday" : `${day} days ago`;
-  if (hr > 0) return `${hr}h ago`;
-  if (min > 0) return `${min}m ago`;
-  return "Just now";
-}
 
 function statusLabel(status: DeviceStatus): string {
   switch (status) {
@@ -354,7 +339,7 @@ function DeviceCard({ device, onRequestDelete }: { device: Device; onRequestDele
         <p className="mt-3 line-clamp-2 text-sm font-semibold leading-snug text-foreground" title={device.name}>
           {device.name}
         </p>
-        <p className="mt-1 text-xs text-muted-foreground">Last seen · {formatLastSeen(device.last_seen)}</p>
+        <p className="mt-1 text-xs text-muted-foreground">Last seen · {formatDeviceLastSeen(device.last_seen)}</p>
         {deviceSummary && (
           <p className="line-clamp-1 text-xs text-muted-foreground/90" title={deviceSummary}>
             {deviceSummary}
@@ -411,7 +396,7 @@ function DeviceListRow({ device, onRequestDelete }: { device: Device; onRequestD
             <p className="truncate text-sm font-semibold text-foreground">{device.name}</p>
             <StatusBadge status={effectiveDeviceStatus(device)} />
           </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">Last seen · {formatLastSeen(device.last_seen)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">Last seen · {formatDeviceLastSeen(device.last_seen)}</p>
           {deviceSummary && (
             <p className="mt-0.5 line-clamp-1 max-w-md text-xs text-muted-foreground/90" title={deviceSummary}>
               {deviceSummary}

@@ -143,8 +143,11 @@ private const val TELEMETRY_INTERVAL_MS = 120_000L
  */
 private const val POLL_INTERVAL_MS = 4_000L
 
-/** [tv_device_heartbeat] keeps dashboard online status without tying it to manifest polls. */
-private const val HEARTBEAT_INTERVAL_MS = 60_000L
+/**
+ * [tv_device_heartbeat] keeps dashboard online status without tying it to manifest polls.
+ * Must stay under the portal / DB stale window (~45s) so last_seen and online status stay fresh.
+ */
+private const val HEARTBEAT_INTERVAL_MS = 30_000L
 
 /** Avoid double UI recovery when both activity resume and [android.content.Intent.ACTION_SCREEN_ON] fire. */
 private const val FOREGROUND_RECOVERY_DEBOUNCE_MS = 750L
